@@ -20,10 +20,18 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         background: resolve(__dirname, "src/scripts/background.js"),
-        content: resolve(__dirname, "src/scripts/contentScript.js"),
+        contentScript: resolve(__dirname, "src/scripts/contentScript.js"),
       },
       output: {
-        entryFileNames: `assets/[name].js`,
+        entryFileNames: (chunkInfo) => {
+          if (
+            chunkInfo.name === "contentScript" ||
+            chunkInfo.name === "background"
+          ) {
+            return `assets/[name].js`;
+          }
+          return `assets/[name].js`;
+        },
         chunkFileNames: `assets/[name].js`,
         assetFileNames: `assets/[name].[ext]`,
       },
