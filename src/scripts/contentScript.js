@@ -10,9 +10,26 @@ let toLang = "es";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
-  if (request.action === "replaceWords") {
-    replaceWords(request.fromLang, request.toLang, request.difficultyLevel);
-    sendResponse({ status: "Words replacement initiated" });
+  if (request.action === "startTranslation") {
+    replaceWords(request.fromLang, request.toLang, request.difficultyLevel)
+      .then(() =>
+        sendResponse({ message: "Translation completed successfully" })
+      )
+      .catch((error) =>
+        sendResponse({ message: "Error during translation: " + error.message })
+      );
+    return true; // Indicates that the response is sent asynchronously
+  } else if (request.action === "revertTranslation") {
+    revertTranslation()
+      .then(() =>
+        sendResponse({ message: "Translation reverted successfully" })
+      )
+      .catch((error) =>
+        sendResponse({
+          message: "Error reverting translation: " + error.message,
+        })
+      );
+    return true; // Indicates that the response is sent asynchronously
   }
 });
 
@@ -158,6 +175,7 @@ function addStyles() {
       display: none;
       position: absolute;
       bottom: 100%;
+      z-index:50;
       left: 50%;
       transform: translateX(-50%);
       background-color: #333;
@@ -173,4 +191,12 @@ function addStyles() {
     }
   `;
   document.head.appendChild(style);
+}
+
+function revertTranslation() {
+  const translatedWords = document.querySelectorAll(".translated-word");
+  translatedWords.forEach((word) => {
+    const originalWord = word.getAttribute("data-original");
+    word.outerHTML = originalWord;
+  });
 }

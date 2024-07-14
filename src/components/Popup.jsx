@@ -1,75 +1,138 @@
 import React, { useEffect, useState } from "react";
+import { Switch } from "@headlessui/react";
 
 const Popup = () => {
   const [isEnabled, setIsEnabled] = useState(false);
   const [fromLang, setFromLang] = useState("English");
   const [toLang, setToLang] = useState("Spanish");
   const [difficultyLevel, setDifficultyLevel] = useState("");
-
-const [tabId, setTabId] = useState(null);
-const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState(""); // For loading and translated states
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-      setTabId(tabs[0].id);
-    });
+    // Restore state when popup opens
+    loadState();
+
+    // Listen for state reset events
+    const listener = (message) => {
+      if (message.action === "stateReset") {
+        loadState();
+      }
+    };
+    chrome.runtime.onMessage.addListener(listener);
+
+    return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
+  const loadState = () => {
+    chrome.storage.local.get(
+      ["isEnabled", "fromLang", "toLang", "difficultyLevel"],
+      (result) => {
+        setIsEnabled(result.isEnabled || false);
+        setFromLang(result.fromLang || "English");
+        setToLang(result.toLang || "Spanish");
+        setDifficultyLevel(result.difficultyLevel || "");
+        setStatus(result.isEnabled ? "Translation active" : "");
+      }
+    );
+  };
 
-    
-  const handleLearnClick = () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+
+
+  const validateState = () => {
+    if (fromLang === toLang) {
+      setError("Source and target languages must be different");
+      return false;
+    }
+    if (!difficultyLevel) {
+      setError("Please select a difficulty level");
+      return false;
+    }
+    setError("");
+    return true;
+  };
+
+  const handleToggle = async () => {
+    const newState = !isEnabled;
+    if (newState && !validateState()) {
+      return;
+    }
+    setIsLoading(true);
+    setStatus("Processing...");
+    setIsEnabled(newState);
+    await chrome.storage.local.set({
+      isEnabled: newState,
+      fromLang,
+      toLang,
+      difficultyLevel,
+    });
+
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
-        // Check if we can inject scripts into this tab
-        const url = new URL(tabs[0].url);
-        if (url.protocol === "http:" || url.protocol === "https:") {
-          chrome.tabs.sendMessage(
-            tabs[0].id,
-            { action: "replaceWords" },
-            (response) => {
-              if (chrome.runtime.lastError) {
-                setMessage(`Error: ${chrome.runtime.lastError.message}`);
-                console.error(chrome.runtime.lastError);
-              } else if (response && response.status) {
-                setMessage(response.status);
-              } else {
-                setMessage("No response from content script");
-              }
-            }
-          );
-        } else {
-          setMessage("Cannot run on this page");
+        try {
+          const response = await chrome.tabs.sendMessage(tabs[0].id, {
+            action: newState ? "startTranslation" : "revertTranslation",
+            fromLang,
+            toLang,
+            difficultyLevel,
+          });
+          setStatus(response.message);
+        } catch (error) {
+          setStatus("Error: Could not communicate with the page");
         }
-      } else {
-        setMessage("No active tab found");
       }
     });
+    setIsLoading(false);
+  };
+
+  const handleLanguageChange = (setter) => (e) => {
+    setter(e.target.value);
+    setIsEnabled(false);
+    chrome.storage.local.set({ isEnabled: false });
+    setStatus("Settings changed. Turn on to apply.");
+  };
+
+  const handleDifficultyChange = (e) => {
+    setDifficultyLevel(e.target.value);
+    setIsEnabled(false);
+    chrome.storage.local.set({ isEnabled: false });
+    setStatus("Settings changed. Turn on to apply.");
   };
 
   return (
-    <div className="w-full p-4 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
-      <h1 className="text-xl font-bold text-gray-800 mb-4">Language Learner</h1>
+    <div className="w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
+      <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
+        Language Learner
+      </h1>
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
         <span className="text-sm font-medium text-gray-700">
-          Translating words
+          {isEnabled ? "Translation On" : "Translation Off"}
         </span>
-        <label className="switch">
-          <input
-            type="checkbox"
-            checked={isEnabled}
-            onChange={() => setIsEnabled(!isEnabled)}
+        <Switch
+          checked={isEnabled}
+          onChange={handleToggle}
+          className={`${
+            isEnabled ? "bg-green-600" : "bg-gray-200"
+          } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500`}
+          disabled={isLoading}
+        >
+          <span className="sr-only">Enable translations</span>
+          <span
+            className={`${
+              isEnabled ? "translate-x-6" : "translate-x-1"
+            } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
           />
-          <span className="slider round"></span>
-        </label>
+        </Switch>
       </div>
 
-      <div className="mb-4">
-        <div className="flex justify-between mb-2">
+      <div className="mb-4 bg-white p-3 rounded-lg shadow">
+        <div className="flex justify-between items-center mb-2">
           <select
             value={fromLang}
-            onChange={(e) => setFromLang(e.target.value)}
-            className="p-1 text-sm border rounded"
+            onChange={handleLanguageChange(setFromLang)}
+            className="p-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option>English</option>
             <option>Spanish</option>
@@ -78,8 +141,8 @@ const [message, setMessage] = useState("");
           <span className="text-sm font-medium text-gray-700">to</span>
           <select
             value={toLang}
-            onChange={(e) => setToLang(e.target.value)}
-            className="p-1 text-sm border rounded"
+            onChange={handleLanguageChange(setToLang)}
+            className="p-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option>Spanish</option>
             <option>English</option>
@@ -90,21 +153,25 @@ const [message, setMessage] = useState("");
 
       <select
         value={difficultyLevel}
-        onChange={(e) => setDifficultyLevel(e.target.value)}
-        className="w-full p-2 mb-4 text-sm border rounded"
+        onChange={handleDifficultyChange}
+        className="w-full p-2 mb-4 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow"
       >
         <option value="">Select difficulty level</option>
         <option value="beginner">Beginner</option>
         <option value="intermediate">Intermediate</option>
         <option value="advanced">Advanced</option>
       </select>
-      <button
-        className="w-full py-2 text-sm font-medium text-white bg-blue-500 rounded hover:bg-blue-600 transition duration-300"
-        onClick={handleLearnClick}
-      >
-        Learn language while browsing this page
-      </button>
-      {message && <p className="mt-2 text-sm text-gray-600">{message}</p>}
+
+      {error && (
+        <p className="text-red-500 text-sm mb-2 bg-red-100 p-2 rounded">
+          {error}
+        </p>
+      )}
+      {status && (
+        <p className="text-blue-600 text-sm mb-2 bg-blue-100 p-2 rounded">
+          {status}
+        </p>
+      )}
     </div>
   );
 };
