@@ -5,16 +5,36 @@ const languageCodeMap = {
   French: "fr",
   // Add more languages as needed
 };
-let fromLang = "en";
-let toLang = "es";
+
+const commonWords = new Set([
+  "the",
+  "be",
+  "to",
+  "of",
+  "and",
+  "a",
+  "in",
+  "that",
+  "have",
+  "I",
+  "it",
+  "for",
+  "not",
+  "on",
+  "with",
+  "he",
+  "as",
+  "you",
+  "do",
+  "at",
+  "has",
+]);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
     replaceWords(request.fromLang, request.toLang, request.difficultyLevel)
-      .then(() =>
-        sendResponse({ message: "Translation completed successfully" })
-      )
+      .then((response) => sendResponse(response))
       .catch((error) =>
         sendResponse({ message: "Error during translation: " + error.message })
       );
@@ -34,65 +54,150 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function replaceWords(fromLang, toLang, difficultyLevel) {
-  const fromCode = languageCodeMap[fromLang] || "en";
-  const toCode = languageCodeMap[toLang] || "es";
+  try {
+    const fromCode = languageCodeMap[fromLang] || "en";
+    const toCode = languageCodeMap[toLang] || "es";
 
-  const textNodes = getTextNodes();
-  const allWords = getAllWords(textNodes);
-  const wordsToTranslate = selectRandomWords(allWords, difficultyLevel);
+    const textNodes = getTextNodes();
+    if (textNodes.length === 0) {
+      throw new Error("No valid text nodes found on the page");
+    }
 
-  const translatedWords = await translateWords(
-    wordsToTranslate,
-    fromCode,
-    toCode
-  );
+    const allWords = getAllWords(textNodes);
+    if (allWords.length === 0) {
+      throw new Error("No valid words found for translation");
+    }
 
-  replaceSelectedWords(textNodes, translatedWords);
-  addStyles();
+    const { previouslyTranslated = [] } = await chrome.storage.local.get(
+      "previouslyTranslated"
+    );
+    const previouslyTranslatedSet = new Set(previouslyTranslated);
+
+    const wordsToTranslate = selectWords(
+      allWords,
+      difficultyLevel,
+      previouslyTranslatedSet
+    );
+    if (wordsToTranslate.length === 0) {
+      throw new Error("No words selected for translation");
+    }
+
+    console.log("Words to translate:", wordsToTranslate);
+
+    const translatedWords = await translateWords(
+      wordsToTranslate,
+      fromCode,
+      toCode
+    );
+
+    console.log("Translated words:", translatedWords);
+
+    replaceSelectedWords(textNodes, translatedWords);
+    addStyles();
+
+    await chrome.storage.local.set({
+      previouslyTranslated: [
+        ...previouslyTranslatedSet,
+        ...translatedWords.map((w) => w.word),
+      ],
+    });
+
+    return { message: "Translation completed successfully" };
+  } catch (error) {
+    console.error("Error during translation:", error);
+    return { message: "Error during translation: " + error.message };
+  }
 }
 
 function getAllWords(textNodes) {
-  const allWords = [];
+  const allWords = new Map();
+  const wordRegex = /^[a-zA-Z]{3,}$/; // Only alphabetic words with 3 or more characters
+
   textNodes.forEach((node) => {
-    const words = node.textContent.trim().split(/\s+/);
-    words.forEach((word) => {
-      if (word.length > 2) {
-        // Ignore very short words
-        allWords.push({
-          word: word,
-          node: node,
-        });
-      }
-    });
+    if (node && node.textContent) {
+      const words = node.textContent.trim().toLowerCase().split(/\s+/);
+      words.forEach((word) => {
+        if (wordRegex.test(word) && !commonWords.has(word)) {
+          allWords.set(word, (allWords.get(word) || 0) + 1);
+        }
+      });
+    }
   });
-  return allWords;
+
+  return Array.from(allWords.entries())
+    .map(([word, count]) => ({
+      word,
+      frequency: count,
+      node: textNodes.find(
+        (node) =>
+          node &&
+          node.textContent &&
+          node.textContent.toLowerCase().includes(word)
+      ),
+    }))
+    .filter((item) => item.node); // Only keep items where a valid node was found
 }
 
-function selectRandomWords(allWords, difficultyLevel) {
-  let wordCount;
+function selectWords(
+  allWords,
+  difficultyLevel,
+  previouslyTranslated = new Set()
+) {
+  let wordCount, frequencyThreshold;
+
   switch (difficultyLevel) {
     case "beginner":
       wordCount = 5;
+      frequencyThreshold = 0.7;
       break;
     case "intermediate":
-      wordCount = 5;
+      wordCount = 10;
+      frequencyThreshold = 0.5;
       break;
     case "advanced":
-      wordCount = 5;
+      wordCount = 15;
+      frequencyThreshold = 0.3;
       break;
     default:
       wordCount = 5;
+      frequencyThreshold = 0.7;
   }
 
-  const shuffled = allWords.sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, Math.min(wordCount, allWords.length));
+  const totalWords = allWords.reduce((sum, word) => sum + word.frequency, 0);
+
+  const eligibleWords = allWords
+    .filter((word) => !previouslyTranslated.has(word.word))
+    .filter((word) => word.frequency / totalWords <= frequencyThreshold)
+    .sort((a, b) => b.frequency - a.frequency);
+
+  const selectedWords = [];
+  const maxAttempts = eligibleWords.length;
+  let attempts = 0;
+
+  while (selectedWords.length < wordCount && attempts < maxAttempts) {
+    const randomIndex = Math.floor(Math.random() * eligibleWords.length);
+    const word = eligibleWords[randomIndex];
+
+    if (!selectedWords.some((w) => w.word === word.word)) {
+      selectedWords.push(word);
+    }
+
+    attempts++;
+  }
+
+  console.log("Selected words:", selectedWords);
+  return selectedWords;
 }
+
 async function translateWords(wordsToTranslate, fromLang, toLang) {
-  const uniqueWords = [...new Set(wordsToTranslate.map((item) => item.word))];
   const translations = {};
 
-  for (let word of uniqueWords) {
-    translations[word] = await translateSingleWord(word, fromLang, toLang);
+  for (let item of wordsToTranslate) {
+    translations[item.word] = await translateSingleWord(
+      item.word,
+      fromLang,
+      toLang
+    );
   }
 
   return wordsToTranslate.map((item) => ({
@@ -123,39 +228,80 @@ async function translateSingleWord(word, fromLang, toLang) {
     return word; // Return original word if translation fails
   }
 }
+
 function replaceSelectedWords(textNodes, translatedWords) {
-  translatedWords.forEach(({ word, translation, node }) => {
-    const regex = new RegExp(`\\b${word}\\b`, "g");
-    node.textContent = node.textContent.replace(regex, (match) => {
-      return `<span class="translated-word" data-original="${match}">${translation}</span>`;
-    });
-  });
+  // Create a map of original words to their translations
+  const translationMap = new Map(
+    translatedWords.map((item) => [item.word.toLowerCase(), item.translation])
+  );
 
   textNodes.forEach((node) => {
-    const tempDiv = document.createElement("div");
-    tempDiv.innerHTML = node.textContent;
-    while (tempDiv.firstChild) {
-      node.parentNode.insertBefore(tempDiv.firstChild, node);
+    if (node && node.textContent) {
+      let newContent = node.textContent;
+      translatedWords.forEach(({ word }) => {
+        const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
+        newContent = newContent.replace(regex, (match) => {
+          const translation = translationMap.get(match.toLowerCase());
+          return `<span class="translated-word" data-original="${match}">${translation}</span>`;
+        });
+      });
+
+      if (newContent !== node.textContent) {
+        replaceNodeContent(node, newContent);
+      }
     }
-    node.parentNode.removeChild(node);
   });
+}
+
+function replaceNodeContent(node, newContent) {
+  const range = document.createRange();
+  range.selectNode(node);
+  const fragment = range.createContextualFragment(newContent);
+  const parent = node.parentNode;
+  if (parent) {
+    parent.replaceChild(fragment, node);
+  }
+}
+
+// Helper function to escape special characters in regex
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getTextNodes() {
   const walker = document.createTreeWalker(
     document.body,
     NodeFilter.SHOW_TEXT,
-    null,
+    {
+      acceptNode: function (node) {
+        if (
+          node.nodeType === Node.TEXT_NODE &&
+          node.textContent.trim() !== "" &&
+          isNodeVisible(node)
+        ) {
+          return NodeFilter.FILTER_ACCEPT;
+        }
+        return NodeFilter.FILTER_REJECT;
+      },
+    },
     false
   );
   const textNodes = [];
   let node;
   while ((node = walker.nextNode())) {
-    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== "") {
-      textNodes.push(node);
-    }
+    textNodes.push(node);
   }
   return textNodes;
+}
+
+function isNodeVisible(node) {
+  const element = node.parentElement;
+  return !!(
+    element &&
+    element.offsetWidth &&
+    element.offsetHeight &&
+    element.getClientRects().length
+  );
 }
 
 function addStyles() {
@@ -164,8 +310,8 @@ function addStyles() {
     .translated-word {
       background-color: #e6f3ff;
       color: green;
+      font-size:50px;
       font-weight: 700;
-      font-size: 50px;
       cursor: pointer;
       position: relative;
     }
@@ -175,7 +321,7 @@ function addStyles() {
       display: none;
       position: absolute;
       bottom: 100%;
-      z-index:50;
+      z-index: 50;
       left: 50%;
       transform: translateX(-50%);
       background-color: #333;
