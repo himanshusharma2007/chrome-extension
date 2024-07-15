@@ -143,7 +143,8 @@ function selectWords(
   difficultyLevel,
   previouslyTranslated = new Set()
 ) {
-  let wordCount, frequencyThreshold;
+  let wordCount;
+  let frequencyThreshold;
 
   switch (difficultyLevel) {
     case "beginner":
@@ -155,7 +156,7 @@ function selectWords(
       frequencyThreshold = 0.5;
       break;
     case "advanced":
-      wordCount = 15;
+      wordCount = 20;
       frequencyThreshold = 0.3;
       break;
     default:
@@ -165,24 +166,43 @@ function selectWords(
 
   const totalWords = allWords.reduce((sum, word) => sum + word.frequency, 0);
 
-  const eligibleWords = allWords
+  // Filter and sort words
+  let eligibleWords = allWords
     .filter((word) => !previouslyTranslated.has(word.word))
     .filter((word) => word.frequency / totalWords <= frequencyThreshold)
     .sort((a, b) => b.frequency - a.frequency);
 
+  // If we don't have enough eligible words, relax the frequency threshold
+  if (eligibleWords.length < wordCount) {
+    eligibleWords = allWords
+      .filter((word) => !previouslyTranslated.has(word.word))
+      .sort((a, b) => b.frequency - a.frequency);
+  }
+
   const selectedWords = [];
-  const maxAttempts = eligibleWords.length;
-  let attempts = 0;
+  const usedIndices = new Set();
 
-  while (selectedWords.length < wordCount && attempts < maxAttempts) {
+  while (
+    selectedWords.length < wordCount &&
+    usedIndices.size < eligibleWords.length
+  ) {
     const randomIndex = Math.floor(Math.random() * eligibleWords.length);
-    const word = eligibleWords[randomIndex];
+    if (!usedIndices.has(randomIndex)) {
+      selectedWords.push(eligibleWords[randomIndex]);
+      usedIndices.add(randomIndex);
+    }
+  }
 
-    if (!selectedWords.some((w) => w.word === word.word)) {
+  // If we still don't have enough words, fill with random words from allWords
+  while (selectedWords.length < wordCount) {
+    const randomIndex = Math.floor(Math.random() * allWords.length);
+    const word = allWords[randomIndex];
+    if (
+      !selectedWords.some((w) => w.word === word.word) &&
+      !previouslyTranslated.has(word.word)
+    ) {
       selectedWords.push(word);
     }
-
-    attempts++;
   }
 
   console.log("Selected words:", selectedWords);
@@ -306,36 +326,65 @@ function isNodeVisible(node) {
 
 function addStyles() {
   const style = document.createElement("style");
-  style.textContent = `
+style.textContent = `
     .translated-word {
-      background-color: #e6f3ff;
-      color: green;
-      font-size:50px;
-      font-weight: 700;
+      background-color: rgba(230, 243, 255, 0.5);
+      border-bottom: 2px solid #4a90e2;
+      padding: 0 2px;
+      margin: 0 1px;
+      border-radius: 3px;
       cursor: pointer;
       position: relative;
+      display: inline-block;
+      transition: background-color 0.3s ease;
+    }
+
+    .translated-word:hover {
+      background-color: rgba(230, 243, 255, 0.8);
     }
 
     .translated-word::after {
       content: attr(data-original);
       display: none;
       position: absolute;
-      bottom: 100%;
-      z-index: 50;
       left: 50%;
       transform: translateX(-50%);
+      bottom: calc(100% + 5px);
       background-color: #333;
       color: #fff;
-      padding: 5px;
-      border-radius: 3px;
+      padding: 6px 10px;
+      border-radius: 4px;
       font-size: 14px;
       white-space: nowrap;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      z-index: 10000;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
     }
 
     .translated-word:hover::after {
       display: block;
+      opacity: 1;
     }
-  `;
+
+    .translated-word::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 5px);
+      transform: translateX(-50%);
+      border-width: 5px;
+      border-style: solid;
+      border-color: #333 transparent transparent transparent;
+      display: none;
+      z-index: 10001;
+    }
+
+    .translated-word:hover::before {
+      display: block;
+    }
+`;
   document.head.appendChild(style);
 }
 
