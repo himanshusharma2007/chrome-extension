@@ -1,12 +1,12 @@
 // contentScript.js
 
 const languageCodeMap = {
-  English: "en",
-  Spanish: "es",
-  French: "fr",
-  Chinese: "zh", // Added Chinese
-  Japanese: "ja", // Added Japanese
-  Russian: "ru", // Added Russian
+  English: "en-US",
+  Spanish: "es-ES",
+  French: "fr-FR",
+  Chinese: "zh-CN",
+  Japanese: "ja-JP",
+  Russian: "ru-RU",
   // Add more languages as needed
 };
 
@@ -33,7 +33,80 @@ const commonWords = new Set([
   "at",
   "has",
 ]);
+const languageCommonWords = {
+  "en-US": new Set([
+    "the",
+    "be",
+    "to",
+    "of",
+    "and",
+    "a",
+    "in",
+    "that",
+    "have",
+    "I",
+  ]),
+  "es-ES": new Set([
+    "el",
+    "la",
+    "de",
+    "que",
+    "y",
+    "a",
+    "en",
+    "un",
+    "ser",
+    "se",
+  ]),
+  "fr-FR": new Set([
+    "le",
+    "la",
+    "de",
+    "et",
+    "un",
+    "être",
+    "avoir",
+    "que",
+    "pour",
+    "dans",
+  ]),
+  "zh-CN": new Set([
+    "的",
+    "是",
+    "不",
+    "了",
+    "在",
+    "人",
+    "有",
+    "我",
+    "他",
+    "这",
+  ]),
+  "ja-JP": new Set([
+    "の",
+    "に",
+    "は",
+    "を",
+    "た",
+    "が",
+    "で",
+    "て",
+    "と",
+    "し",
+  ]),
+  "ru-RU": new Set(["и", "в", "не", "на", "я", "быть", "он", "с", "что", "а"]),
+};
 
+function detectLanguage(text) {
+  const words = text.toLowerCase().split(/\s+/);
+  const langScores = Object.keys(languageCommonWords).map((lang) => {
+    const commonWords = languageCommonWords[lang];
+    const score = words.filter((word) => commonWords.has(word)).length;
+    return { lang, score };
+  });
+  const detectedLang = langScores.reduce((a, b) => (a.score > b.score ? a : b));
+  return detectedLang.score > 0 ? detectedLang.lang : null;
+}
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
@@ -59,17 +132,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function replaceWords(fromLang, toLang, difficultyLevel) {
   try {
-    const fromCode = languageCodeMap[fromLang] || "en";
-    const toCode = languageCodeMap[toLang] || "es";
+    const fromCode = languageCodeMap[fromLang] || "en-US";
+    const toCode = languageCodeMap[toLang] || "es-ES";
 
     const textNodes = getTextNodes();
     if (textNodes.length === 0) {
-      throw new Error("No valid text nodes found on the page");
+      return { message: "No text found on the page" };
     }
 
-    const allWords = getAllWords(textNodes);
+    const allWords = getAllWords(textNodes, fromLang);
     if (allWords.length === 0) {
-      throw new Error("No valid words found for translation");
+      return { message: `No words found in ${fromLang} for translation` };
     }
 
     const { previouslyTranslated = [] } = await chrome.storage.local.get(
@@ -83,7 +156,7 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
       previouslyTranslatedSet
     );
     if (wordsToTranslate.length === 0) {
-      throw new Error("No words selected for translation");
+      return { message: "No new words available for translation" };
     }
 
     console.log("Words to translate:", wordsToTranslate);
@@ -93,9 +166,10 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
       fromCode,
       toCode
     );
+
     console.log("Translated words:", translatedWords);
 
-    replaceSelectedWords(textNodes, translatedWords);
+    replaceSelectedWords(textNodes, translatedWords, toLang);
     addStyles();
 
     await chrome.storage.local.set({
@@ -105,25 +179,36 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
       ],
     });
 
-    return { message: "Translation completed successfully" };
+    return {
+      message: `Translation completed successfully. Translated ${
+        translatedWords.length
+      } word${
+        translatedWords.length !== 1 ? "s" : ""
+      } from ${fromLang} to ${toLang}.`,
+      translatedCount: translatedWords.length,
+    };
   } catch (error) {
     console.error("Error during translation:", error);
     return { message: "Error during translation: " + error.message };
   }
 }
 
-function getAllWords(textNodes) {
+function getAllWords(textNodes, fromLang) {
   const allWords = new Map();
-  const wordRegex = /^[a-zA-Z]{3,}$/; // Only alphabetic words with 3 or more characters
+  const wordRegex =
+    /^[a-zA-Z\u00C0-\u00FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\u0400-\u04FF]{3,}$/; // Include Unicode ranges for various languages
 
   textNodes.forEach((node) => {
     if (node && node.textContent) {
-      const words = node.textContent.trim().toLowerCase().split(/\s+/);
-      words.forEach((word) => {
-        if (wordRegex.test(word) && !commonWords.has(word)) {
-          allWords.set(word, (allWords.get(word) || 0) + 1);
-        }
-      });
+      const nodeLanguage = detectLanguage(node.textContent);
+      if (nodeLanguage === languageCodeMap[fromLang]) {
+        const words = node.textContent.trim().split(/\s+/);
+        words.forEach((word) => {
+          if (wordRegex.test(word) && !commonWords.has(word.toLowerCase())) {
+            allWords.set(word, (allWords.get(word) || 0) + 1);
+          }
+        });
+      }
     }
   });
 
@@ -132,13 +217,10 @@ function getAllWords(textNodes) {
       word,
       frequency: count,
       node: textNodes.find(
-        (node) =>
-          node &&
-          node.textContent &&
-          node.textContent.toLowerCase().includes(word)
+        (node) => node && node.textContent && node.textContent.includes(word)
       ),
     }))
-    .filter((item) => item.node); // Only keep items where a valid node was found
+    .filter((item) => item.node);
 }
 
 function selectWords(
@@ -182,6 +264,12 @@ function selectWords(
       .sort((a, b) => b.frequency - a.frequency);
   }
 
+  // Return all eligible words if there are fewer than requested
+  if (eligibleWords.length <= wordCount) {
+    return eligibleWords;
+  }
+
+  // Otherwise, select words randomly
   const selectedWords = [];
   const usedIndices = new Set();
 
@@ -196,22 +284,8 @@ function selectWords(
     }
   }
 
-  // If we still don't have enough words, fill with random words from allWords
-  while (selectedWords.length < wordCount) {
-    const randomIndex = Math.floor(Math.random() * allWords.length);
-    const word = allWords[randomIndex];
-    if (
-      !selectedWords.some((w) => w.word === word.word) &&
-      !previouslyTranslated.has(word.word)
-    ) {
-      selectedWords.push(word);
-    }
-  }
-
-  console.log("Selected words:", selectedWords);
   return selectedWords;
 }
-
 async function translateWords(wordsToTranslate, fromLang, toLang) {
   const translations = {};
 
@@ -251,8 +325,15 @@ async function translateSingleWord(word, fromLang, toLang) {
   }
 }
 
-function replaceSelectedWords(textNodes, translatedWords) {
-  // Create a map of original words to their translations
+// Add this function to contentScript.js
+function speakWord(word, lang) {
+  const utterance = new SpeechSynthesisUtterance(word);
+  utterance.lang = lang;
+  speechSynthesis.speak(utterance);
+}
+
+// Modify the replaceSelectedWords function
+function replaceSelectedWords(textNodes, translatedWords, toLang) {
   const translationMap = new Map(
     translatedWords.map((item) => [item.word.toLowerCase(), item.translation])
   );
@@ -264,7 +345,7 @@ function replaceSelectedWords(textNodes, translatedWords) {
         const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
         newContent = newContent.replace(regex, (match) => {
           const translation = translationMap.get(match.toLowerCase());
-          return `<span class="translated-word" data-original="${match}">${translation}</span>`;
+          return `<span class="translated-word" data-original="${match}" data-translation="${translation}" data-lang="${toLang}">${translation}</span>`;
         });
       });
 
@@ -273,8 +354,16 @@ function replaceSelectedWords(textNodes, translatedWords) {
       }
     }
   });
-}
 
+  // Add click event listeners to translated words
+  document.querySelectorAll(".translated-word").forEach((word) => {
+    word.addEventListener("click", function () {
+      const text = this.textContent;
+      const lang = this.dataset.lang;
+      speakWord(text, languageCodeMap[lang]);
+    });
+  });
+}
 function replaceNodeContent(node, newContent) {
   const range = document.createRange();
   range.selectNode(node);
@@ -346,7 +435,7 @@ function addStyles() {
     }
 
     .translated-word::after {
-      content: attr(data-original);
+      content: attr(data-original) " 🔊";
       display: none;
       position: absolute;
       left: 50%;
@@ -386,7 +475,7 @@ function addStyles() {
     .translated-word:hover::before {
       display: block;
     }
-`;
+  `;
   document.head.appendChild(style);
 }
 
