@@ -1,8 +1,12 @@
 // contentScript.js
+
 const languageCodeMap = {
   English: "en",
   Spanish: "es",
   French: "fr",
+  Chinese: "zh", // Added Chinese
+  Japanese: "ja", // Added Japanese
+  Russian: "ru", // Added Russian
   // Add more languages as needed
 };
 
@@ -89,7 +93,6 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
       fromCode,
       toCode
     );
-
     console.log("Translated words:", translatedWords);
 
     replaceSelectedWords(textNodes, translatedWords);
@@ -225,7 +228,6 @@ async function translateWords(wordsToTranslate, fromLang, toLang) {
     translation: translations[item.word],
   }));
 }
-
 async function translateSingleWord(word, fromLang, toLang) {
   const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
     word
@@ -326,7 +328,7 @@ function isNodeVisible(node) {
 
 function addStyles() {
   const style = document.createElement("style");
-style.textContent = `
+  style.textContent = `
     .translated-word {
       background-color: rgba(230, 243, 255, 0.5);
       border-bottom: 2px solid #4a90e2;

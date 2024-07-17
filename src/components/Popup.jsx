@@ -39,7 +39,40 @@ const Popup = () => {
   };
 
 
+const handleSettingChange = async (setter, value) => {
+  setter(value);
+  if (isEnabled) {
+    setIsEnabled(false);
+    await revertTranslation();
+    setStatus(
+      "Settings changed. Translation reverted. Turn on to apply new settings."
+    );
+  } else {
+    setStatus("Settings changed. Turn on to apply.");
+  }
+  await chrome.storage.local.set({ isEnabled: false });
+};
 
+const revertTranslation = async () => {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (tabs[0]) {
+        try {
+          await chrome.tabs.sendMessage(tabs[0].id, {
+            action: "revertTranslation",
+          });
+          resolve();
+        } catch (error) {
+          console.error("Error reverting translation:", error);
+          setStatus("Error: Could not revert translation");
+          resolve();
+        }
+      } else {
+        resolve();
+      }
+    });
+  });
+};
   const validateState = () => {
     if (fromLang === toLang) {
       setError("Source and target languages must be different");
@@ -86,19 +119,13 @@ const Popup = () => {
     setIsLoading(false);
   };
 
-  const handleLanguageChange = (setter) => (e) => {
-    setter(e.target.value);
-    setIsEnabled(false);
-    chrome.storage.local.set({ isEnabled: false });
-    setStatus("Settings changed. Turn on to apply.");
-  };
+const handleLanguageChange = (setter) => (e) => {
+  handleSettingChange(setter, e.target.value);
+};
 
-  const handleDifficultyChange = (e) => {
-    setDifficultyLevel(e.target.value);
-    setIsEnabled(false);
-    chrome.storage.local.set({ isEnabled: false });
-    setStatus("Settings changed. Turn on to apply.");
-  };
+const handleDifficultyChange = (e) => {
+  handleSettingChange(setDifficultyLevel, e.target.value);
+};
 
   return (
     <div className="w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
@@ -137,6 +164,9 @@ const Popup = () => {
             <option>English</option>
             <option>Spanish</option>
             <option>French</option>
+            <option>Chinese</option>
+            <option>Japanese</option>
+            <option>Russian</option>
           </select>
           <span className="text-sm font-medium text-gray-700">to</span>
           <select
@@ -147,6 +177,9 @@ const Popup = () => {
             <option>Spanish</option>
             <option>English</option>
             <option>French</option>
+            <option>Chinese</option>
+            <option>Japanese</option>
+            <option>Russian</option>
           </select>
         </div>
       </div>
