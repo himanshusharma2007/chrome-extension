@@ -1,4 +1,24 @@
-// contentScript.js
+import * as tf from "@tensorflow/tfjs";
+import * as use from "@tensorflow-models/universal-sentence-encoder";
+
+let model;
+let isAIEnabled = false;
+
+async function loadDependencies() {
+  try {
+    model = await use.load();
+    console.log("AI model loaded successfully");
+    isAIEnabled = true;
+  } catch (error) {
+    console.error("Failed to load AI model:", error);
+    isAIEnabled = false;
+  }
+}
+
+// Initialize immediately
+loadDependencies();
+// Call this when your content script initializes
+loadDependencies();
 
 const languageCodeMap = {
   English: "en-US",
@@ -107,9 +127,21 @@ function detectLanguage(text) {
   const detectedLang = langScores.reduce((a, b) => (a.score > b.score ? a : b));
   return detectedLang.score > 0 ? detectedLang.lang : null;
 }
+async function getEmbeddings(sentences) {
+  if (!model || !isAIEnabled) {
+    return null;
+  }
+  try {
+    return await model.embed(sentences);
+  } catch (error) {
+    console.error("Error getting embeddings:", error);
+    return null;
+  }
+}
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
+    isAIEnabled = request.useAI; // Add this line to toggle AI
     replaceWords(request.fromLang, request.toLang, request.difficultyLevel)
       .then((response) => sendResponse(response))
       .catch((error) =>
@@ -132,15 +164,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function replaceWords(fromLang, toLang, difficultyLevel) {
   try {
+    console.log("Starting replaceWords function");
     const fromCode = languageCodeMap[fromLang] || "en-US";
     const toCode = languageCodeMap[toLang] || "es-ES";
 
     const textNodes = getTextNodes();
+    console.log("Found text nodes:", textNodes.length);
+
     if (textNodes.length === 0) {
       return { message: "No text found on the page" };
     }
 
     const allWords = getAllWords(textNodes, fromLang);
+    console.log("All words found:", allWords.length);
+
     if (allWords.length === 0) {
       return { message: `No words found in ${fromLang} for translation` };
     }
@@ -149,12 +186,15 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
       "previouslyTranslated"
     );
     const previouslyTranslatedSet = new Set(previouslyTranslated);
+    console.log("Previously translated words:", previouslyTranslatedSet.size);
 
-    const wordsToTranslate = selectWords(
+    const wordsToTranslate = await selectWords(
       allWords,
       difficultyLevel,
       previouslyTranslatedSet
     );
+    console.log("Words selected for translation:", wordsToTranslate.length);
+
     if (wordsToTranslate.length === 0) {
       return { message: "No new words available for translation" };
     }
@@ -162,7 +202,7 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
     console.log("Words to translate:", wordsToTranslate);
 
     const translatedWords = await translateWords(
-      wordsToTranslate,
+      wordsToTranslate.map((w) => w.word),
       fromCode,
       toCode
     );
@@ -192,11 +232,10 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
     return { message: "Error during translation: " + error.message };
   }
 }
-
 function getAllWords(textNodes, fromLang) {
-  const allWords = new Map();
+  const allWords = [];
   const wordRegex =
-    /^[a-zA-Z\u00C0-\u00FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\u0400-\u04FF]{3,}$/; // Include Unicode ranges for various languages
+    /^[a-zA-Z\u00C0-\u00FF\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\u0400-\u04FF]{3,}$/;
 
   textNodes.forEach((node) => {
     if (node && node.textContent) {
@@ -205,87 +244,88 @@ function getAllWords(textNodes, fromLang) {
         const words = node.textContent.trim().split(/\s+/);
         words.forEach((word) => {
           if (wordRegex.test(word) && !commonWords.has(word.toLowerCase())) {
-            allWords.set(word, (allWords.get(word) || 0) + 1);
+            allWords.push({
+              word,
+              sentence: node.textContent.trim(),
+            });
           }
         });
       }
     }
   });
 
-  return Array.from(allWords.entries())
-    .map(([word, count]) => ({
-      word,
-      frequency: count,
-      node: textNodes.find(
-        (node) => node && node.textContent && node.textContent.includes(word)
-      ),
-    }))
-    .filter((item) => item.node);
+  return allWords;
 }
 
-function selectWords(
+async function selectWords(
   allWords,
   difficultyLevel,
   previouslyTranslated = new Set()
 ) {
   let wordCount;
-  let frequencyThreshold;
-
   switch (difficultyLevel) {
     case "beginner":
       wordCount = 5;
-      frequencyThreshold = 0.7;
       break;
     case "intermediate":
       wordCount = 10;
-      frequencyThreshold = 0.5;
       break;
     case "advanced":
       wordCount = 20;
-      frequencyThreshold = 0.3;
       break;
     default:
       wordCount = 5;
-      frequencyThreshold = 0.7;
   }
 
-  const totalWords = allWords.reduce((sum, word) => sum + word.frequency, 0);
+  // Filter out previously translated words first
+  const newWords = allWords.filter(
+    ({ word }) => !previouslyTranslated.has(word)
+  );
 
-  // Filter and sort words
-  let eligibleWords = allWords
-    .filter((word) => !previouslyTranslated.has(word.word))
-    .filter((word) => word.frequency / totalWords <= frequencyThreshold)
-    .sort((a, b) => b.frequency - a.frequency);
-
-  // If we don't have enough eligible words, relax the frequency threshold
-  if (eligibleWords.length < wordCount) {
-    eligibleWords = allWords
-      .filter((word) => !previouslyTranslated.has(word.word))
-      .sort((a, b) => b.frequency - a.frequency);
+  if (newWords.length === 0) {
+    console.log("No new words found for translation");
+    return []; // No new words to translate
   }
 
-  // Return all eligible words if there are fewer than requested
-  if (eligibleWords.length <= wordCount) {
-    return eligibleWords;
-  }
+  let scoredWords;
+  if (isAIEnabled && model) {
+    try {
+      const sentences = newWords.map((word) => word.sentence);
+      const embeddings = await getEmbeddings(sentences);
 
-  // Otherwise, select words randomly
-  const selectedWords = [];
-  const usedIndices = new Set();
-
-  while (
-    selectedWords.length < wordCount &&
-    usedIndices.size < eligibleWords.length
-  ) {
-    const randomIndex = Math.floor(Math.random() * eligibleWords.length);
-    if (!usedIndices.has(randomIndex)) {
-      selectedWords.push(eligibleWords[randomIndex]);
-      usedIndices.add(randomIndex);
+      if (embeddings) {
+        scoredWords = newWords.map((word, i) => {
+          const embedding = embeddings.slice([i, 0], [1, -1]);
+          const score = embedding.norm().dataSync()[0];
+          return { ...word, score };
+        });
+      }
+    } catch (error) {
+      console.error("Error in AI-based word scoring:", error);
+      // Fallback to frequency-based selection
+      scoredWords = null;
     }
   }
 
-  return selectedWords;
+  if (!scoredWords) {
+    // Fallback to frequency-based selection
+    const wordFrequency = new Map();
+    newWords.forEach(({ word }) => {
+      wordFrequency.set(word, (wordFrequency.get(word) || 0) + 1);
+    });
+    scoredWords = newWords.map((word) => ({
+      ...word,
+      score: wordFrequency.get(word.word),
+    }));
+  }
+
+  // Sort words by score (descending)
+  const sortedWords = scoredWords.sort((a, b) => b.score - a.score);
+
+  console.log("Selected words:", sortedWords.slice(0, wordCount));
+  return sortedWords.slice(0, wordCount);
 }
+
 async function translateWords(wordsToTranslate, fromLang, toLang) {
   const translations = {};
 

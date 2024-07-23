@@ -9,6 +9,7 @@ const Popup = () => {
   const [error, setError] = useState("");
   const [status, setStatus] = useState(""); // For loading and translated states
   const [isLoading, setIsLoading] = useState(false);
+  const [useAI, setUseAI] = useState(true); // New state for AI toggle
 
   useEffect(() => {
     // Restore state when popup opens
@@ -27,12 +28,13 @@ const Popup = () => {
 
   const loadState = () => {
     chrome.storage.local.get(
-      ["isEnabled", "fromLang", "toLang", "difficultyLevel"],
+      ["isEnabled", "fromLang", "toLang", "difficultyLevel", "useAI"],
       (result) => {
         setIsEnabled(result.isEnabled || false);
         setFromLang(result.fromLang || "English");
         setToLang(result.toLang || "Spanish");
         setDifficultyLevel(result.difficultyLevel || "");
+        setUseAI(result.useAI !== undefined ? result.useAI : true);
         setStatus(result.isEnabled ? "Translation active" : "");
       }
     );
@@ -72,6 +74,7 @@ const Popup = () => {
       });
     });
   };
+
   const validateState = () => {
     if (fromLang === toLang) {
       setError("Source and target languages must be different");
@@ -85,30 +88,70 @@ const Popup = () => {
     return true;
   };
 
-  const handleToggle = async () => {
-    const newState = !isEnabled;
-    if (newState && !validateState()) {
-      return;
-    }
+const handleToggle = async () => {
+  const newState = !isEnabled;
+  if (newState && !validateState()) {
+    return;
+  }
 
-    setIsLoading(true);
-    setStatus("Processing...");
-    setIsEnabled(newState);
-    await chrome.storage.local.set({
-      isEnabled: newState,
-      fromLang,
-      toLang,
-      difficultyLevel,
-    });
+  setIsLoading(true);
+  setStatus("Processing...");
+  setIsEnabled(newState);
+  await chrome.storage.local.set({
+    isEnabled: newState,
+    fromLang,
+    toLang,
+    difficultyLevel,
+    useAI,
+  });
 
+  if (newState) {
+    // Inject the content script
+    chrome.runtime.sendMessage(
+      { action: "injectContentScript" },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error(
+            "Error injecting content script:",
+            chrome.runtime.lastError
+          );
+          setStatus("Error: Could not inject content script");
+          setIsLoading(false);
+          return;
+        }
+
+        // Wait a bit for the content script to initialize
+        setTimeout(() => {
+          chrome.tabs.query(
+            { active: true, currentWindow: true },
+            async (tabs) => {
+              if (tabs[0]) {
+                try {
+                  const response = await chrome.tabs.sendMessage(tabs[0].id, {
+                    action: "startTranslation",
+                    fromLang,
+                    toLang,
+                    difficultyLevel,
+                    useAI,
+                  });
+                  setStatus(response.message);
+                } catch (error) {
+                  setStatus("Error: Could not communicate with the page");
+                }
+              }
+            }
+          );
+          setIsLoading(false);
+        }, 1000); // Wait for 1 second
+      }
+    );
+  } else {
+    // Handle turning off translation
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
         try {
           const response = await chrome.tabs.sendMessage(tabs[0].id, {
-            action: newState ? "startTranslation" : "revertTranslation",
-            fromLang,
-            toLang,
-            difficultyLevel,
+            action: "revertTranslation",
           });
           setStatus(response.message);
         } catch (error) {
@@ -117,14 +160,18 @@ const Popup = () => {
       }
     });
     setIsLoading(false);
-  };
-
+  }
+};
   const handleLanguageChange = (setter) => (e) => {
     handleSettingChange(setter, e.target.value);
   };
 
   const handleDifficultyChange = (e) => {
     handleSettingChange(setDifficultyLevel, e.target.value);
+  };
+
+  const handleAIToggle = () => {
+    handleSettingChange(setUseAI, !useAI);
   };
 
   return (
@@ -194,6 +241,28 @@ const Popup = () => {
         <option value="intermediate">Intermediate</option>
         <option value="advanced">Advanced</option>
       </select>
+
+      <div className="mb-4 bg-white p-3 rounded-lg shadow">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-gray-700">
+            Use AI for word selection
+          </span>
+          <Switch
+            checked={useAI}
+            onChange={handleAIToggle}
+            className={`${
+              useAI ? "bg-blue-600" : "bg-gray-200"
+            } relative inline-flex h-6 w-11 items-center rounded-full`}
+          >
+            <span className="sr-only">Use AI</span>
+            <span
+              className={`${
+                useAI ? "translate-x-6" : "translate-x-1"
+              } inline-block h-4 w-4 transform rounded-full bg-white transition`}
+            />
+          </Switch>
+        </div>
+      </div>
 
       {error && (
         <p className="text-red-500 text-sm mb-2 bg-red-100 p-2 rounded">
