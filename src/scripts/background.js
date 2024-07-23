@@ -1,28 +1,12 @@
 // background.js
-chrome.action.onClicked.addListener((tab) => {
-  chrome.scripting
-    .executeScript({
-      target: { tabId: tab.id },
-      files: ["assets/contentScript.js"],
-    })
-    .then(() => {
-      console.log("Content script injected successfully");
-    })
-    .catch((error) => {
-      console.error("Failed to inject content script:", error);
-    });
+chrome.runtime.onInstalled.addListener(() => {
+  console.log("Extension installed");
 });
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "injectContentScript") {
-    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      chrome.scripting.executeScript({
-        target: { tabId: tabs[0].id },
-        files: ["assets/contentScript.js"],
-      });
-    });
-  }
+chrome.action.onClicked.addListener((tab) => {
+  chrome.tabs.sendMessage(tab.id, { action: "toggleTranslation" });
 });
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete") {
     resetExtensionState();
@@ -40,6 +24,7 @@ function resetExtensionState() {
       fromLang: "English",
       toLang: "Spanish",
       difficultyLevel: "",
+      useAI: true,
     },
     () => {
       chrome.runtime.sendMessage({ action: "stateReset" });

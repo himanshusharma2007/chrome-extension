@@ -87,7 +87,6 @@ const Popup = () => {
     setError("");
     return true;
   };
-
 const handleToggle = async () => {
   const newState = !isEnabled;
   if (newState && !validateState()) {
@@ -105,62 +104,23 @@ const handleToggle = async () => {
     useAI,
   });
 
-  if (newState) {
-    // Inject the content script
-    chrome.runtime.sendMessage(
-      { action: "injectContentScript" },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.error(
-            "Error injecting content script:",
-            chrome.runtime.lastError
-          );
-          setStatus("Error: Could not inject content script");
-          setIsLoading(false);
-          return;
-        }
-
-        // Wait a bit for the content script to initialize
-        setTimeout(() => {
-          chrome.tabs.query(
-            { active: true, currentWindow: true },
-            async (tabs) => {
-              if (tabs[0]) {
-                try {
-                  const response = await chrome.tabs.sendMessage(tabs[0].id, {
-                    action: "startTranslation",
-                    fromLang,
-                    toLang,
-                    difficultyLevel,
-                    useAI,
-                  });
-                  setStatus(response.message);
-                } catch (error) {
-                  setStatus("Error: Could not communicate with the page");
-                }
-              }
-            }
-          );
-          setIsLoading(false);
-        }, 1000); // Wait for 1 second
+  chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    if (tabs[0]) {
+      try {
+        const response = await chrome.tabs.sendMessage(tabs[0].id, {
+          action: newState ? "startTranslation" : "revertTranslation",
+          fromLang,
+          toLang,
+          difficultyLevel,
+          useAI,
+        });
+        setStatus(response.message);
+      } catch (error) {
+        setStatus("Error: Could not communicate with the page");
       }
-    );
-  } else {
-    // Handle turning off translation
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (tabs[0]) {
-        try {
-          const response = await chrome.tabs.sendMessage(tabs[0].id, {
-            action: "revertTranslation",
-          });
-          setStatus(response.message);
-        } catch (error) {
-          setStatus("Error: Could not communicate with the page");
-        }
-      }
-    });
+    }
     setIsLoading(false);
-  }
+  });
 };
   const handleLanguageChange = (setter) => (e) => {
     handleSettingChange(setter, e.target.value);

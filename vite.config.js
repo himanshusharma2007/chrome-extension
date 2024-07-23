@@ -8,6 +8,8 @@ import commonjs from "@rollup/plugin-commonjs";
 export default defineConfig({
   plugins: [
     react(),
+    nodeResolve(),
+    commonjs(),
     {
       name: "copy-manifest",
       writeBundle() {
@@ -23,11 +25,13 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         background: resolve(__dirname, "src/scripts/background.js"),
         contentScript: resolve(__dirname, "src/scripts/contentScript.js"),
+        contentLogic: resolve(__dirname, "src/scripts/contentLogic.js"),
       },
       output: {
         entryFileNames: "assets/[name].js",
         chunkFileNames: "assets/[name].js",
         assetFileNames: "assets/[name].[ext]",
+        format: "es",
       },
     },
   },
