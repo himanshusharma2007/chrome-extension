@@ -6,73 +6,71 @@ const Popup = () => {
   const [fromLang, setFromLang] = useState("English");
   const [toLang, setToLang] = useState("Spanish");
   const [difficultyLevel, setDifficultyLevel] = useState("");
+  const [isAIEnabled, setIsAIEnabled] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState(""); // For loading and translated states
+  const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    // Restore state when popup opens
     loadState();
-
-    // Listen for state reset events
     const listener = (message) => {
       if (message.action === "stateReset") {
         loadState();
       }
     };
     chrome.runtime.onMessage.addListener(listener);
-
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
   const loadState = () => {
     chrome.storage.local.get(
-      ["isEnabled", "fromLang", "toLang", "difficultyLevel"],
+      ["isEnabled", "fromLang", "toLang", "difficultyLevel", "isAIEnabled"],
       (result) => {
         setIsEnabled(result.isEnabled || false);
         setFromLang(result.fromLang || "English");
         setToLang(result.toLang || "Spanish");
         setDifficultyLevel(result.difficultyLevel || "");
+        setIsAIEnabled(result.isAIEnabled || false);
         setStatus(result.isEnabled ? "Translation active" : "");
       }
     );
   };
 
+  const handleSettingChange = async (setter, value) => {
+    setter(value);
+    if (isEnabled) {
+      setIsEnabled(false);
+      await revertTranslation();
+      setStatus(
+        "Settings changed. Translation reverted. Turn on to apply new settings."
+      );
+    } else {
+      setStatus("Settings changed. Turn on to apply.");
+    }
+    await chrome.storage.local.set({ isEnabled: false });
+  };
 
-const handleSettingChange = async (setter, value) => {
-  setter(value);
-  if (isEnabled) {
-    setIsEnabled(false);
-    await revertTranslation();
-    setStatus(
-      "Settings changed. Translation reverted. Turn on to apply new settings."
-    );
-  } else {
-    setStatus("Settings changed. Turn on to apply.");
-  }
-  await chrome.storage.local.set({ isEnabled: false });
-};
-
-const revertTranslation = async () => {
-  return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (tabs[0]) {
-        try {
-          await chrome.tabs.sendMessage(tabs[0].id, {
-            action: "revertTranslation",
-          });
-          resolve();
-        } catch (error) {
-          console.error("Error reverting translation:", error);
-          setStatus("Error: Could not revert translation");
+  const revertTranslation = async () => {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+        if (tabs[0]) {
+          try {
+            await chrome.tabs.sendMessage(tabs[0].id, {
+              action: "revertTranslation",
+            });
+            resolve();
+          } catch (error) {
+            console.error("Error reverting translation:", error);
+            setStatus("Error: Could not revert translation");
+            resolve();
+          }
+        } else {
           resolve();
         }
-      } else {
-        resolve();
-      }
+      });
     });
-  });
-};
+  };
+
   const validateState = () => {
     if (fromLang === toLang) {
       setError("Source and target languages must be different");
@@ -99,6 +97,7 @@ const revertTranslation = async () => {
       fromLang,
       toLang,
       difficultyLevel,
+      isAIEnabled,
     });
 
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
@@ -109,6 +108,7 @@ const revertTranslation = async () => {
             fromLang,
             toLang,
             difficultyLevel,
+            isAIEnabled,
           });
           setStatus(response.message);
         } catch (error) {
@@ -119,13 +119,28 @@ const revertTranslation = async () => {
     setIsLoading(false);
   };
 
-const handleLanguageChange = (setter) => (e) => {
-  handleSettingChange(setter, e.target.value);
-};
+  const handleLanguageChange = (setter) => (e) => {
+    handleSettingChange(setter, e.target.value);
+  };
 
-const handleDifficultyChange = (e) => {
-  handleSettingChange(setDifficultyLevel, e.target.value);
-};
+  const handleDifficultyChange = (e) => {
+    handleSettingChange(setDifficultyLevel, e.target.value);
+  };
+
+  const handleAIToggle = async () => {
+    const newAIState = !isAIEnabled;
+    setIsAIEnabled(newAIState);
+    if (isEnabled) {
+      await handleSettingChange(setIsAIEnabled, newAIState);
+    } else {
+      await chrome.storage.local.set({ isAIEnabled: newAIState });
+      setStatus(
+        `AI selection ${
+          newAIState ? "enabled" : "disabled"
+        }. Turn on translation to apply.`
+      );
+    }
+  };
 
   return (
     <div className="w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
@@ -149,6 +164,26 @@ const handleDifficultyChange = (e) => {
           <span
             className={`${
               isEnabled ? "translate-x-6" : "translate-x-1"
+            } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+          />
+        </Switch>
+      </div>
+
+      <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
+        <span className="text-sm font-medium text-gray-700">
+          AI-powered selection
+        </span>
+        <Switch
+          checked={isAIEnabled}
+          onChange={handleAIToggle}
+          className={`${
+            isAIEnabled ? "bg-blue-600" : "bg-gray-200"
+          } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+        >
+          <span className="sr-only">Enable AI-powered selection</span>
+          <span
+            className={`${
+              isAIEnabled ? "translate-x-6" : "translate-x-1"
             } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
           />
         </Switch>

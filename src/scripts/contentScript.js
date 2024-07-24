@@ -1,5 +1,10 @@
 // contentScript.js
 
+const API_URL =
+  "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english";
+const API_KEY = "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"; // Replace with your actual API key
+const MAX_AI_WORDS = 20; // Maximum number of words to select using AI
+const CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
 const languageCodeMap = {
   English: "en",
   Spanish: "es",
@@ -34,30 +39,88 @@ const commonWords = new Set([
   "has",
 ]);
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log("Content script received message:", request);
-  if (request.action === "startTranslation") {
-    replaceWords(request.fromLang, request.toLang, request.difficultyLevel)
-      .then((response) => sendResponse(response))
-      .catch((error) =>
-        sendResponse({ message: "Error during translation: " + error.message })
-      );
-    return true; // Indicates that the response is sent asynchronously
-  } else if (request.action === "revertTranslation") {
-    revertTranslation()
-      .then(() =>
-        sendResponse({ message: "Translation reverted successfully" })
-      )
-      .catch((error) =>
-        sendResponse({
-          message: "Error reverting translation: " + error.message,
-        })
-      );
-    return true; // Indicates that the response is sent asynchronously
+async function selectWordsAI(text, difficultyLevel) {
+  const cacheKey = `ai_words_${text.substring(0, 100)}_${difficultyLevel}`;
+  const cachedResult = await getCachedResult(cacheKey);
+  if (cachedResult) {
+    return cachedResult;
   }
-});
 
-async function replaceWords(fromLang, toLang, difficultyLevel) {
+  try {
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: text }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const words = text.split(/\s+/);
+    let selectedWords = words.filter(
+      (_, index) =>
+        result[0][index].score > getThresholdForDifficulty(difficultyLevel)
+    );
+    selectedWords = selectedWords.slice(0, MAX_AI_WORDS); // Limit the number of words
+
+    if (selectedWords.length === 0) {
+      console.warn(
+        "AI selection returned no words. Falling back to default algorithm."
+      );
+      return selectWords(getAllWords(getTextNodes()), difficultyLevel);
+    }
+
+    await cacheResult(cacheKey, selectedWords);
+    return selectedWords;
+  } catch (error) {
+    console.error("Error in AI word selection:", error);
+    return selectWords(getAllWords(getTextNodes()), difficultyLevel);
+  }
+}
+
+function getThresholdForDifficulty(difficultyLevel) {
+  switch (difficultyLevel) {
+    case "beginner":
+      return 0.8;
+    case "intermediate":
+      return 0.6;
+    case "advanced":
+      return 0.4;
+    default:
+      return 0.7;
+  }
+}
+
+async function getCachedResult(key) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(key, (result) => {
+      if (
+        result[key] &&
+        Date.now() - result[key].timestamp < CACHE_EXPIRATION
+      ) {
+        resolve(result[key].data);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+async function cacheResult(key, data) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(
+      { [key]: { data, timestamp: Date.now() } },
+      resolve
+    );
+  });
+}
+
+async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
   try {
     const fromCode = languageCodeMap[fromLang] || "en";
     const toCode = languageCodeMap[toLang] || "es";
@@ -77,11 +140,18 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
     );
     const previouslyTranslatedSet = new Set(previouslyTranslated);
 
-    const wordsToTranslate = selectWords(
-      allWords,
-      difficultyLevel,
-      previouslyTranslatedSet
-    );
+    let wordsToTranslate;
+    if (isAIEnabled) {
+      const text = textNodes.map((node) => node.textContent).join(" ");
+      wordsToTranslate = await selectWordsAI(text, difficultyLevel);
+    } else {
+      wordsToTranslate = selectWords(
+        allWords,
+        difficultyLevel,
+        previouslyTranslatedSet
+      );
+    }
+
     if (wordsToTranslate.length === 0) {
       throw new Error("No words selected for translation");
     }
@@ -111,7 +181,33 @@ async function replaceWords(fromLang, toLang, difficultyLevel) {
     return { message: "Error during translation: " + error.message };
   }
 }
-
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log("Content script received message:", request);
+  if (request.action === "startTranslation") {
+    replaceWords(
+      request.fromLang,
+      request.toLang,
+      request.difficultyLevel,
+      request.isAIEnabled
+    )
+      .then((response) => sendResponse(response))
+      .catch((error) =>
+        sendResponse({ message: "Error during translation: " + error.message })
+      );
+    return true; // Indicates that the response is sent asynchronously
+  } else if (request.action === "revertTranslation") {
+    revertTranslation()
+      .then(() =>
+        sendResponse({ message: "Translation reverted successfully" })
+      )
+      .catch((error) =>
+        sendResponse({
+          message: "Error reverting translation: " + error.message,
+        })
+      );
+    return true; // Indicates that the response is sent asynchronously
+  }
+});
 function getAllWords(textNodes) {
   const allWords = new Map();
   const wordRegex = /^[a-zA-Z]{3,}$/; // Only alphabetic words with 3 or more characters
