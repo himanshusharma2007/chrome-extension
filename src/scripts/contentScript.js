@@ -584,11 +584,10 @@ function speakWord(word, lang) {
   speechSynthesis.speak(utterance);
 }
 function replaceSelectedWords(textNodes, translatedWords) {
+  // Create a map of original words to their translations
   const translationMap = new Map(
     translatedWords.map((item) => [item.word.toLowerCase(), item.translation])
   );
-
-  const fragment = document.createDocumentFragment();
 
   textNodes.forEach((node) => {
     if (node && node.textContent) {
@@ -602,21 +601,10 @@ function replaceSelectedWords(textNodes, translatedWords) {
       });
 
       if (newContent !== node.textContent) {
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = newContent;
-        while (tempDiv.firstChild) {
-          fragment.appendChild(tempDiv.firstChild);
-        }
-      } else {
-        fragment.appendChild(node.cloneNode(true));
+        replaceNodeContent(node, newContent);
       }
     }
   });
-
-  const parent = textNodes[0].parentNode;
-  parent.innerHTML = "";
-  parent.appendChild(fragment);
-
   // Add click event listeners to translated words
   document.querySelectorAll(".translated-word").forEach((word) => {
     word.addEventListener("click", function () {
