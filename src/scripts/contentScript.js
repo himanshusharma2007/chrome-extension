@@ -59,6 +59,11 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     const chunks = splitTextIntoChunks(text, 500);
     console.log("Number of chunks:", chunks.length);
 
+    // Determine MAX_AI_WORDS dynamically based on difficulty level and number of chunks
+    const wordsPerChunk = getWordsPerChunk(difficultyLevel);
+    const MAX_AI_WORDS = chunks.length * wordsPerChunk;
+    console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
+
     let allMeaningfulWords = [];
 
     for (let i = 0; i < chunks.length; i++) {
@@ -101,19 +106,18 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
       const meaningfulWords = selectMeaningfulWords(
         chunkWords,
         result,
-        difficultyLevel
+        difficultyLevel,
+        wordsPerChunk
       );
       console.log("Meaningful words selected from chunk:", meaningfulWords);
 
       allMeaningfulWords = allMeaningfulWords.concat(meaningfulWords);
     }
 
-
     // Randomly select MAX_AI_WORDS from allMeaningfulWords
     const selectedWords = randomlySelectWords(allMeaningfulWords, MAX_AI_WORDS);
 
     console.log("AI selectedWords:", selectedWords);
-
     if (selectedWords.length === 0) {
       console.warn(
         "AI selection returned no words. Falling back to default algorithm."
@@ -137,7 +141,18 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     return selectWords(getAllWords(getTextNodes()), difficultyLevel);
   }
 }
-
+function getWordsPerChunk(difficultyLevel) {
+  switch (difficultyLevel) {
+    case "beginner":
+      return 10;
+    case "intermediate":
+      return 15;
+    case "advanced":
+      return 20;
+    default:
+      return 15;
+  }
+}
 function splitTextIntoChunks(text, chunkSize) {
   const words = text.split(/\s+/);
   const chunks = [];
@@ -147,7 +162,12 @@ function splitTextIntoChunks(text, chunkSize) {
   return chunks;
 }
 
-function selectMeaningfulWords(words, aiResult, difficultyLevel) {
+function selectMeaningfulWords(
+  words,
+  aiResult,
+  difficultyLevel,
+  wordsPerChunk
+) {
   console.log("Selecting meaningful words");
   console.log("Difficulty level:", difficultyLevel);
   console.log("AI result:", aiResult);
@@ -206,11 +226,11 @@ function selectMeaningfulWords(words, aiResult, difficultyLevel) {
   });
 
   console.log("Meaningful words:", meaningfulWords);
-  return meaningfulWords;
+   return randomlySelectWords(meaningfulWords, wordsPerChunk);;
 }
 function randomlySelectWords(words, count) {
   const shuffled = words.sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, count);
+  return shuffled.slice(0, Math.min(count, words.length));
 }
 
 function findNodeForWord(word, textNodes) {
