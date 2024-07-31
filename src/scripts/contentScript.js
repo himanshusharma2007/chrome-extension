@@ -40,9 +40,14 @@ const commonWords = new Set([
 ]);
 
 async function selectWordsAI(text, difficultyLevel, retries = 3) {
+  console.log("Starting selectWordsAI function");
+  console.log("Text length:", text.length);
+  console.log("Difficulty level:", difficultyLevel);
+
   const cacheKey = `ai_words_${text.substring(0, 100)}_${difficultyLevel}`;
   const cachedResult = await getCachedResult(cacheKey);
   if (cachedResult) {
+    console.log("Returning cached result");
     return cachedResult;
   }
 
@@ -52,9 +57,14 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
 
     // Split the text into chunks to process the entire page
     const chunks = splitTextIntoChunks(text, 500);
+    console.log("Number of chunks:", chunks.length);
+
     let allMeaningfulWords = [];
 
-    for (let chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(`Processing chunk ${i + 1} of ${chunks.length}`);
+      const chunk = chunks[i];
+
       const response = await fetch(API_URL, {
         method: "POST",
         headers: {
@@ -78,19 +88,26 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
       }
 
       const result = await response.json();
-      console.log("API Response Body:", result);
+      console.log("Full API Response:", JSON.stringify(result, null, 2));
+
+      if (!result.scores || !result.labels || !result.sequence) {
+        console.error("Unexpected API response structure:", result);
+        throw new Error("Unexpected API response structure");
+      }
 
       const chunkWords = chunk.split(/\s+/);
+      console.log("Number of words in chunk:", chunkWords.length);
+
       const meaningfulWords = selectMeaningfulWords(
         chunkWords,
         result,
         difficultyLevel
       );
+      console.log("Meaningful words selected from chunk:", meaningfulWords);
+
       allMeaningfulWords = allMeaningfulWords.concat(meaningfulWords);
     }
 
-    // Remove duplicates
-    allMeaningfulWords = [...new Set(allMeaningfulWords)];
 
     // Randomly select MAX_AI_WORDS from allMeaningfulWords
     const selectedWords = randomlySelectWords(allMeaningfulWords, MAX_AI_WORDS);
@@ -111,6 +128,8 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
       }))
       .filter((item) => item.node !== null);
 
+    console.log("Selected words with nodes:", selectedWordsWithNodes);
+
     await cacheResult(cacheKey, selectedWordsWithNodes);
     return selectedWordsWithNodes;
   } catch (error) {
@@ -129,30 +148,66 @@ function splitTextIntoChunks(text, chunkSize) {
 }
 
 function selectMeaningfulWords(words, aiResult, difficultyLevel) {
+  console.log("Selecting meaningful words");
+  console.log("Difficulty level:", difficultyLevel);
+  console.log("AI result:", aiResult);
+
   const commonThreshold = 0.4;
   const uncommonThreshold = 0.3;
   const rareThreshold = 0.3;
 
-  return words.filter((word) => {
-    if (word.length < 4 || commonWords.has(word.toLowerCase())) return false;
+  const commonScore = aiResult.scores[aiResult.labels.indexOf("common")];
+  const uncommonScore = aiResult.scores[aiResult.labels.indexOf("uncommon")];
+  const rareScore = aiResult.scores[aiResult.labels.indexOf("rare")];
 
-    const commonScore = aiResult.scores[aiResult.labels.indexOf("common")];
-    const uncommonScore = aiResult.scores[aiResult.labels.indexOf("uncommon")];
-    const rareScore = aiResult.scores[aiResult.labels.indexOf("rare")];
+  console.log(
+    `Overall scores - Common: ${commonScore}, Uncommon: ${uncommonScore}, Rare: ${rareScore}`
+  );
 
-    switch (difficultyLevel) {
-      case "beginner":
-        return commonScore > commonThreshold;
-      case "intermediate":
-        return uncommonScore > uncommonThreshold;
-      case "advanced":
-        return rareScore > rareThreshold;
-      default:
-        return uncommonScore > uncommonThreshold || rareScore > rareThreshold;
+  let scoreThreshold;
+  switch (difficultyLevel) {
+    case "beginner":
+      scoreThreshold = commonScore;
+      break;
+    case "intermediate":
+      scoreThreshold = uncommonScore;
+      break;
+    case "advanced":
+      scoreThreshold = rareScore;
+      break;
+    default:
+      scoreThreshold = Math.max(uncommonScore, rareScore);
+  }
+
+  const meaningfulWords = words.filter((word) => {
+    console.log(`Analyzing word: ${word}`);
+
+    if (word.length < 4) {
+      console.log(`  Rejected: Word length < 4`);
+      return false;
     }
-  });
-}
 
+    if (commonWords.has(word.toLowerCase())) {
+      console.log(`  Rejected: Common word`);
+      return false;
+    }
+
+    // Use a simple frequency-based approach to determine if the word is meaningful
+    const wordFrequency =
+      words.filter((w) => w.toLowerCase() === word.toLowerCase()).length /
+      words.length;
+    const isSelected = wordFrequency < scoreThreshold;
+
+    console.log(
+      `  Word frequency: ${wordFrequency}, Score threshold: ${scoreThreshold}`
+    );
+    console.log(`  Selected: ${isSelected}`);
+    return isSelected;
+  });
+
+  console.log("Meaningful words:", meaningfulWords);
+  return meaningfulWords;
+}
 function randomlySelectWords(words, count) {
   const shuffled = words.sort(() => 0.5 - Math.random());
   return shuffled.slice(0, count);
@@ -211,8 +266,6 @@ function getThresholdForDifficulty(difficultyLevel, readabilityScore) {
   }
 }
 
-
-
 async function getCachedResult(key) {
   return new Promise((resolve) => {
     chrome.storage.local.get(key, (result) => {
@@ -270,13 +323,13 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 
     console.log("Words to translate:", wordsToTranslate);
 
-   const translatedWords = await translateWords(
-     wordsToTranslate
-       .map((item) => item.word)
-       .filter((word) => word && typeof word === "string"),
-     fromCode,
-     toCode
-   );
+    const translatedWords = await translateWords(
+      wordsToTranslate
+        .map((item) => item.word)
+        .filter((word) => word && typeof word === "string"),
+      fromCode,
+      toCode
+    );
     console.log("Translated words:", translatedWords);
 
     replaceSelectedWords(textNodes, translatedWords);
