@@ -38,7 +38,40 @@ const commonWords = new Set([
   "at",
   "has",
 ]);
+const dbName = "LanguageLearnerCache";
+const storeName = "translations";
 
+async function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(dbName, 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      db.createObjectStore(storeName, { keyPath: "key" });
+    };
+  });
+}
+
+async function getCachedTranslation(word, fromLang, toLang) {
+  const db = await openDB();
+  const transaction = db.transaction(storeName, "readonly");
+  const store = transaction.objectStore(storeName);
+  const key = `${word}_${fromLang}_${toLang}`;
+  return new Promise((resolve) => {
+    const request = store.get(key);
+    request.onsuccess = () =>
+      resolve(request.result ? request.result.translation : null);
+  });
+}
+
+async function cacheTranslation(word, translation, fromLang, toLang) {
+  const db = await openDB();
+  const transaction = db.transaction(storeName, "readwrite");
+  const store = transaction.objectStore(storeName);
+  const key = `${word}_${fromLang}_${toLang}`;
+  store.put({ key, translation, timestamp: Date.now() });
+}
 async function selectWordsAI(text, difficultyLevel, retries = 3) {
   console.log("Starting selectWordsAI function");
   console.log("Text length:", text.length);
@@ -59,65 +92,36 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     const chunks = splitTextIntoChunks(text, 500);
     console.log("Number of chunks:", chunks.length);
 
-    // Determine MAX_AI_WORDS dynamically based on difficulty level and number of chunks
+    // Determine wordsPerChunk dynamically based on difficulty level
     const wordsPerChunk = getWordsPerChunk(difficultyLevel);
-    const MAX_AI_WORDS = chunks.length * wordsPerChunk;
-    console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
+    console.log("Words per chunk:", wordsPerChunk);
 
-    let allMeaningfulWords = [];
-
-    for (let i = 0; i < chunks.length; i++) {
-      console.log(`Processing chunk ${i + 1} of ${chunks.length}`);
-      const chunk = chunks[i];
-
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inputs: chunk,
-          parameters: {
-            candidate_labels: ["common", "uncommon", "rare"],
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error("API Error Response:", errorBody);
-        throw new Error(
-          `HTTP error! status: ${response.status}, body: ${errorBody}`
-        );
-      }
-
-      const result = await response.json();
-      console.log("Full API Response:", JSON.stringify(result, null, 2));
-
-      if (!result.scores || !result.labels || !result.sequence) {
-        console.error("Unexpected API response structure:", result);
-        throw new Error("Unexpected API response structure");
-      }
-
+    const chunkPromises = chunks.map(async (chunk, index) => {
+      console.log(`Processing chunk ${index + 1} of ${chunks.length}`);
+      const result = await fetchAIResult(chunk);
       const chunkWords = chunk.split(/\s+/);
-      console.log("Number of words in chunk:", chunkWords.length);
-
-      const meaningfulWords = selectMeaningfulWords(
+      return selectMeaningfulWords(
         chunkWords,
         result,
         difficultyLevel,
         wordsPerChunk
       );
-      console.log("Meaningful words selected from chunk:", meaningfulWords);
+    });
 
-      allMeaningfulWords = allMeaningfulWords.concat(meaningfulWords);
-    }
+    const meaningfulWordsPerChunk = await Promise.all(chunkPromises);
+    const allMeaningfulWords = meaningfulWordsPerChunk.flat();
+
+    console.log("Total meaningful words selected:", allMeaningfulWords.length);
+
+    // Determine MAX_AI_WORDS dynamically based on difficulty level and number of chunks
+    const MAX_AI_WORDS = Math.min(chunks.length * wordsPerChunk, 100); // Cap at 100 words
+    console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
 
     // Randomly select MAX_AI_WORDS from allMeaningfulWords
     const selectedWords = randomlySelectWords(allMeaningfulWords, MAX_AI_WORDS);
 
     console.log("AI selectedWords:", selectedWords);
+
     if (selectedWords.length === 0) {
       console.warn(
         "AI selection returned no words. Falling back to default algorithm."
@@ -138,9 +142,40 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     return selectedWordsWithNodes;
   } catch (error) {
     console.error("Error in AI word selection:", error);
+    if (retries > 0) {
+      console.log(`Retrying... (${retries} attempts left)`);
+      return selectWordsAI(text, difficultyLevel, retries - 1);
+    }
     return selectWords(getAllWords(getTextNodes()), difficultyLevel);
   }
 }
+
+async function fetchAIResult(chunk) {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      inputs: chunk,
+      parameters: {
+        candidate_labels: ["common", "uncommon", "rare"],
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error("API Error Response:", errorBody);
+    throw new Error(
+      `HTTP error! status: ${response.status}, body: ${errorBody}`
+    );
+  }
+
+  return await response.json();
+}
+
 function getWordsPerChunk(difficultyLevel) {
   switch (difficultyLevel) {
     case "beginner":
@@ -153,6 +188,7 @@ function getWordsPerChunk(difficultyLevel) {
       return 15;
   }
 }
+
 function splitTextIntoChunks(text, chunkSize) {
   const words = text.split(/\s+/);
   const chunks = [];
@@ -160,6 +196,11 @@ function splitTextIntoChunks(text, chunkSize) {
     chunks.push(words.slice(i, i + chunkSize).join(" "));
   }
   return chunks;
+}
+
+function randomlySelectWords(words, count) {
+  const shuffled = words.sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, Math.min(count, words.length));
 }
 
 function selectMeaningfulWords(
@@ -226,11 +267,7 @@ function selectMeaningfulWords(
   });
 
   console.log("Meaningful words:", meaningfulWords);
-   return randomlySelectWords(meaningfulWords, wordsPerChunk);;
-}
-function randomlySelectWords(words, count) {
-  const shuffled = words.sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, Math.min(count, words.length));
+  return randomlySelectWords(meaningfulWords, wordsPerChunk);
 }
 
 function findNodeForWord(word, textNodes) {
@@ -494,22 +531,29 @@ function selectWords(
   console.log("Selected words:", selectedWords);
   return selectedWords;
 }
-
 async function translateWords(wordsToTranslate, fromLang, toLang) {
-  const translations = {};
+  const translations = await Promise.all(
+    wordsToTranslate.map(async (word) => {
+      if (typeof word === "string" && word.trim() !== "") {
+        const cachedTranslation = await getCachedTranslation(
+          word,
+          fromLang,
+          toLang
+        );
+        if (cachedTranslation) {
+          return { word, translation: cachedTranslation };
+        }
+        const translation = await translateSingleWord(word, fromLang, toLang);
+        await cacheTranslation(word, translation, fromLang, toLang);
+        return { word, translation };
+      }
+      return { word, translation: word };
+    })
+  );
 
-  for (let word of wordsToTranslate) {
-    if (typeof word === "string" && word.trim() !== "") {
-      translations[word] = await translateSingleWord(word, fromLang, toLang);
-    }
-  }
-
-  return wordsToTranslate
-    .filter((word) => typeof word === "string" && word.trim() !== "")
-    .map((word) => ({
-      word: word,
-      translation: translations[word] || word,
-    }));
+  return translations.filter(
+    (item) => item.word && typeof item.word === "string"
+  );
 }
 async function translateSingleWord(word, fromLang, toLang) {
   const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
@@ -540,10 +584,11 @@ function speakWord(word, lang) {
   speechSynthesis.speak(utterance);
 }
 function replaceSelectedWords(textNodes, translatedWords) {
-  // Create a map of original words to their translations
   const translationMap = new Map(
     translatedWords.map((item) => [item.word.toLowerCase(), item.translation])
   );
+
+  const fragment = document.createDocumentFragment();
 
   textNodes.forEach((node) => {
     if (node && node.textContent) {
@@ -557,10 +602,21 @@ function replaceSelectedWords(textNodes, translatedWords) {
       });
 
       if (newContent !== node.textContent) {
-        replaceNodeContent(node, newContent);
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = newContent;
+        while (tempDiv.firstChild) {
+          fragment.appendChild(tempDiv.firstChild);
+        }
+      } else {
+        fragment.appendChild(node.cloneNode(true));
       }
     }
   });
+
+  const parent = textNodes[0].parentNode;
+  parent.innerHTML = "";
+  parent.appendChild(fragment);
+
   // Add click event listeners to translated words
   document.querySelectorAll(".translated-word").forEach((word) => {
     word.addEventListener("click", function () {
@@ -570,7 +626,6 @@ function replaceSelectedWords(textNodes, translatedWords) {
     });
   });
 }
-
 function replaceNodeContent(node, newContent) {
   const range = document.createRange();
   range.selectNode(node);
