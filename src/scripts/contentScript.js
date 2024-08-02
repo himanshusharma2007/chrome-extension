@@ -41,6 +41,24 @@ const commonWords = new Set([
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
 
+function saveState(state) {
+  localStorage.setItem('extensionState', JSON.stringify(state));
+}
+
+function loadState() {
+  const state = localStorage.getItem('extensionState');
+  return state ? JSON.parse(state) : null;
+}
+
+// Add this message listener
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "getState") {
+    const state = loadState();
+    sendResponse({ state: state });
+  }
+  return true;
+});
+
 async function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, 1);
@@ -78,11 +96,11 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
   console.log("Difficulty level:", difficultyLevel);
 
   const cacheKey = `ai_words_${text.substring(0, 100)}_${difficultyLevel}`;
-  // const cachedResult = await getCachedResult(cacheKey);
-  // if (cachedResult) {
-  //   console.log("Returning cached result");
-  //   return cachedResult;
-  // }
+  const cachedResult = await getCachedResult(cacheKey);
+  if (cachedResult) {
+    console.log("Returning cached result");
+    return cachedResult;
+  }
 
   try {
     console.log("Sending request to Hugging Face API:");
@@ -422,6 +440,13 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
+    saveState({
+      isEnabled: true,
+      fromLang: request.fromLang,
+      toLang: request.toLang,
+      difficultyLevel: request.difficultyLevel,
+      isAIEnabled: request.isAIEnabled,
+    });
     replaceWords(
       request.fromLang,
       request.toLang,
@@ -432,8 +457,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((error) =>
         sendResponse({ message: "Error during translation: " + error.message })
       );
-    return true; // Indicates that the response is sent asynchronously
+    return true;
   } else if (request.action === "revertTranslation") {
+    saveState({
+      isEnabled: false,
+      fromLang: request.fromLang,
+      toLang: request.toLang,
+      difficultyLevel: request.difficultyLevel,
+      isAIEnabled: request.isAIEnabled,
+    });
     revertTranslation()
       .then(() =>
         sendResponse({ message: "Translation reverted successfully" })
@@ -443,7 +475,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           message: "Error reverting translation: " + error.message,
         })
       );
-    return true; // Indicates that the response is sent asynchronously
+    return true;
   }
 });
 function getAllWords(textNodes) {

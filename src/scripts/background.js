@@ -1,31 +1,36 @@
 // background.js
 
-let activeTabId = null;
-
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  if (activeTabId !== activeInfo.tabId) {
-    activeTabId = activeInfo.tabId;
-    resetExtensionState();
-  }
+  checkAndUpdateExtensionState(activeInfo.tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === "complete" && tabId === activeTabId) {
-    resetExtensionState();
+  if (changeInfo.status === "complete") {
+    checkAndUpdateExtensionState(tabId);
   }
 });
 
-function resetExtensionState() {
-  chrome.storage.local.set(
-    {
-      isEnabled: false,
-      fromLang: "English",
-      toLang: "Spanish",
-      difficultyLevel: "",
-      isAIEnabled: false,
-    },
-    () => {
-      chrome.runtime.sendMessage({ action: "stateReset" });
+function checkAndUpdateExtensionState(tabId) {
+  chrome.tabs.sendMessage(tabId, { action: "getState" }, (response) => {
+    if (chrome.runtime.lastError) {
+      // Content script might not be loaded yet, set default state
+      setDefaultState();
+    } else if (response && response.state) {
+      // Update popup with the state from content script
+      chrome.storage.local.set(response.state);
+    } else {
+      // No state found, set default state
+      setDefaultState();
     }
-  );
+  });
+}
+
+function setDefaultState() {
+  chrome.storage.local.set({
+    isEnabled: false,
+    fromLang: "English",
+    toLang: "Spanish",
+    difficultyLevel: "",
+    isAIEnabled: false,
+  });
 }
