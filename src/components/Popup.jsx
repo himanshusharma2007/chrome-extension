@@ -11,16 +11,16 @@ const Popup = () => {
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    loadState();
-    const listener = (message) => {
-      if (message.action === "stateReset") {
-        loadState();
-      }
-    };
-    chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
-  }, []);
+useEffect(() => {
+  loadState();
+  const listener = (message) => {
+    if (message.action === "stateReset") {
+      loadState();
+    }
+  };
+  chrome.runtime.onMessage.addListener(listener);
+  return () => chrome.runtime.onMessage.removeListener(listener);
+}, []);
 
   const loadState = () => {
     chrome.storage.local.get(

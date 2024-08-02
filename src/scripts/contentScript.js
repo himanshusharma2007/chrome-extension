@@ -78,11 +78,11 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
   console.log("Difficulty level:", difficultyLevel);
 
   const cacheKey = `ai_words_${text.substring(0, 100)}_${difficultyLevel}`;
-  const cachedResult = await getCachedResult(cacheKey);
-  if (cachedResult) {
-    console.log("Returning cached result");
-    return cachedResult;
-  }
+  // const cachedResult = await getCachedResult(cacheKey);
+  // if (cachedResult) {
+  //   console.log("Returning cached result");
+  //   return cachedResult;
+  // }
 
   try {
     console.log("Sending request to Hugging Face API:");
@@ -117,8 +117,22 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     const MAX_AI_WORDS = Math.min(chunks.length * wordsPerChunk, 100); // Cap at 100 words
     console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
 
+    const selectedWords = [];
+    const selectedWordsSet = new Set(); // To keep track of unique words
+
     // Randomly select MAX_AI_WORDS from allMeaningfulWords
-    const selectedWords = randomlySelectWords(allMeaningfulWords, MAX_AI_WORDS);
+    while (
+      selectedWords.length < MAX_AI_WORDS &&
+      allMeaningfulWords.length > 0
+    ) {
+      const randomIndex = Math.floor(Math.random() * allMeaningfulWords.length);
+      const word = allMeaningfulWords[randomIndex].toLowerCase();
+      if (!selectedWordsSet.has(word)) {
+        selectedWordsSet.add(word);
+        selectedWords.push(allMeaningfulWords[randomIndex]);
+        allMeaningfulWords.splice(randomIndex, 1);
+      }
+    }
 
     console.log("AI selectedWords:", selectedWords);
 
@@ -544,16 +558,16 @@ async function translateWords(wordsToTranslate, fromLang, toLang) {
           return { word, translation: cachedTranslation };
         }
         const translation = await translateSingleWord(word, fromLang, toLang);
-        await cacheTranslation(word, translation, fromLang, toLang);
-        return { word, translation };
+        if (translation && translation !== word) {
+          await cacheTranslation(word, translation, fromLang, toLang);
+          return { word, translation };
+        }
       }
-      return { word, translation: word };
+      return null; // Return null for invalid translations
     })
   );
 
-  return translations.filter(
-    (item) => item.word && typeof item.word === "string"
-  );
+  return translations.filter((item) => item !== null);
 }
 async function translateSingleWord(word, fromLang, toLang) {
   const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
@@ -592,12 +606,13 @@ function replaceSelectedWords(textNodes, translatedWords) {
   textNodes.forEach((node) => {
     if (node && node.textContent) {
       let newContent = node.textContent;
-      translatedWords.forEach(({ word }) => {
-        const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
-        newContent = newContent.replace(regex, (match) => {
-          const translation = translationMap.get(match.toLowerCase());
-          return `<span class="translated-word" data-original="${match}">${translation}</span>`;
-        });
+      translatedWords.forEach(({ word, translation }) => {
+        if (translation && translation !== word) {
+          const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
+          newContent = newContent.replace(regex, (match) => {
+            return `<span class="translated-word" data-original="${match}">${translation}</span>`;
+          });
+        }
       });
 
       if (newContent !== node.textContent) {
@@ -605,6 +620,7 @@ function replaceSelectedWords(textNodes, translatedWords) {
       }
     }
   });
+
   // Add click event listeners to translated words
   document.querySelectorAll(".translated-word").forEach((word) => {
     word.addEventListener("click", function () {
@@ -614,6 +630,12 @@ function replaceSelectedWords(textNodes, translatedWords) {
     });
   });
 }
+
+// Helper function to escape special characters in regex
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function replaceNodeContent(node, newContent) {
   const range = document.createRange();
   range.selectNode(node);
@@ -622,11 +644,6 @@ function replaceNodeContent(node, newContent) {
   if (parent) {
     parent.replaceChild(fragment, node);
   }
-}
-
-// Helper function to escape special characters in regex
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getTextNodes() {
