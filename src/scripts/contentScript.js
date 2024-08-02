@@ -42,11 +42,11 @@ const dbName = "LanguageLearnerCache";
 const storeName = "translations";
 
 function saveState(state) {
-  localStorage.setItem('extensionState', JSON.stringify(state));
+  localStorage.setItem("extensionState", JSON.stringify(state));
 }
 
 function loadState() {
-  const state = localStorage.getItem('extensionState');
+  const state = localStorage.getItem("extensionState");
   return state ? JSON.parse(state) : null;
 }
 
@@ -275,6 +275,12 @@ function selectMeaningfulWords(
   const meaningfulWords = words.filter((word) => {
     console.log(`Analyzing word: ${word}`);
 
+    // Check if the word contains only alphabetic characters
+    if (!/^[a-zA-Z]+$/.test(word)) {
+      console.log(`  Rejected: Contains non-alphabetic characters`);
+      return false;
+    }
+
     if (word.length < 4) {
       console.log(`  Rejected: Word length < 4`);
       return false;
@@ -303,8 +309,9 @@ function selectMeaningfulWords(
 }
 
 function findNodeForWord(word, textNodes) {
+  const wordRegex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "i");
   for (let node of textNodes) {
-    if (node.textContent.toLowerCase().includes(word.toLowerCase())) {
+    if (wordRegex.test(node.textContent)) {
       return node;
     }
   }
@@ -484,9 +491,9 @@ function getAllWords(textNodes) {
 
   textNodes.forEach((node) => {
     if (node && node.textContent) {
-      const words = node.textContent.trim().toLowerCase().split(/\s+/);
+      const words = node.textContent.trim().split(/\s+/);
       words.forEach((word) => {
-        if (wordRegex.test(word) && !commonWords.has(word)) {
+        if (wordRegex.test(word) && !commonWords.has(word.toLowerCase())) {
           allWords.set(word, (allWords.get(word) || 0) + 1);
         }
       });
@@ -501,7 +508,7 @@ function getAllWords(textNodes) {
         (node) =>
           node &&
           node.textContent &&
-          node.textContent.toLowerCase().includes(word)
+          node.textContent.toLowerCase().includes(word.toLowerCase())
       ),
     }))
     .filter((item) => item.node); // Only keep items where a valid node was found
