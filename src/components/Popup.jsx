@@ -89,6 +89,7 @@ const Popup = () => {
   const validateState = () => {
     if (fromLang === toLang) {
       setError("Source and target languages must be different");
+      console.log("fromLang,toLang :>> ", fromLang, toLang);
       return false;
     }
     if (!difficultyLevel) {
@@ -104,8 +105,9 @@ const Popup = () => {
       return;
     }
     setIsLoading(true);
-    setStatus("Processing...");
     setIsEnabled(newState);
+
+    setStatus("Processing...");
 
     const state = {
       isEnabled: newState,
