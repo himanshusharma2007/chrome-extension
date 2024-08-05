@@ -40,27 +40,7 @@ const commonWords = new Set([
 ]);
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
-function saveState(state) {
-  chrome.runtime.sendMessage({ action: "saveState", state: state });
-}
 
-function loadState() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: "loadState" }, (response) => {
-      resolve(response.state);
-    });
-  });
-}
-
-
-// Add this message listener
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "getState") {
-    const state = loadState();
-    sendResponse({ state: state });
-  }
-  return true;
-});
 
 async function openDB() {
   return new Promise((resolve, reject) => {
@@ -367,7 +347,7 @@ function getThresholdForDifficulty(difficultyLevel, readabilityScore) {
 
 async function getCachedResult(key) {
   return new Promise((resolve) => {
-    chrome.storage.session.get(key, (result) => {
+    chrome.storage.local.get(key, (result) => {
       if (
         result[key] &&
         Date.now() - result[key].timestamp < CACHE_EXPIRATION
@@ -382,7 +362,7 @@ async function getCachedResult(key) {
 
 async function cacheResult(key, data) {
   return new Promise((resolve) => {
-    chrome.storage.session.set(
+    chrome.storage.local.set(
       { [key]: { data, timestamp: Date.now() } },
       resolve
     );
@@ -398,10 +378,10 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
     if (textNodes.length === 0) {
       throw new Error("No valid text nodes found on the page");
     }
-    const response = await chrome.runtime.sendMessage({
-      action: "getPreviouslyTranslated",
-    });
-    const previouslyTranslated = response.previouslyTranslated || [];
+
+    const { previouslyTranslated = [] } = await chrome.storage.local.get(
+      "previouslyTranslated"
+    );
     const previouslyTranslatedSet = new Set(previouslyTranslated);
 
     let wordsToTranslate;
@@ -433,33 +413,24 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 
     replaceSelectedWords(textNodes, translatedWords);
     addStyles();
-    await chrome.runtime.sendMessage({
-      action: "updatePreviouslyTranslated",
-      words: translatedWords.map((w) => w.word),
+
+    await chrome.storage.local.set({
+      previouslyTranslated: [
+        ...previouslyTranslatedSet,
+        ...translatedWords.map((w) => w.word),
+      ],
     });
-    // await chrome.storage.session.set({
-    //   previouslyTranslated: [
-    //     ...previouslyTranslatedSet,
-    //     ...translatedWords.map((w) => w.word),
-    //   ],
-    // });
 
     return { message: "Translation completed successfully" };
   } catch (error) {
-    console.error("Error during translation: 1", error);
-    return { message: "Error during translation: 2 " + error.message };
+    console.error("Error during translation:", error);
+    return { message: "Error during translation: " + error.message };
   }
 }
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
-    saveState({
-      isEnabled: true,
-      fromLang: request.fromLang,
-      toLang: request.toLang,
-      difficultyLevel: request.difficultyLevel,
-      isAIEnabled: request.isAIEnabled,
-    });
+  
     replaceWords(
       request.fromLang,
       request.toLang,
@@ -468,17 +439,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     )
       .then((response) => sendResponse(response))
       .catch((error) =>
-        sendResponse({ message: "Error during translation: 3 " + error.message })
+        sendResponse({ message: "Error during translation: " + error.message })
       );
     return true;
   } else if (request.action === "revertTranslation") {
-    saveState({
-      isEnabled: false,
-      fromLang: request.fromLang,
-      toLang: request.toLang,
-      difficultyLevel: request.difficultyLevel,
-      isAIEnabled: request.isAIEnabled,
-    });
+   
     revertTranslation()
       .then(() =>
         sendResponse({ message: "Translation reverted successfully" })
