@@ -40,15 +40,18 @@ const commonWords = new Set([
 ]);
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
-
 function saveState(state) {
-  localStorage.setItem("extensionState", JSON.stringify(state));
+  chrome.runtime.sendMessage({ action: "saveState", state: state });
 }
 
 function loadState() {
-  const state = localStorage.getItem("extensionState");
-  return state ? JSON.parse(state) : null;
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: "loadState" }, (response) => {
+      resolve(response.state);
+    });
+  });
 }
+
 
 // Add this message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -364,7 +367,7 @@ function getThresholdForDifficulty(difficultyLevel, readabilityScore) {
 
 async function getCachedResult(key) {
   return new Promise((resolve) => {
-    chrome.storage.local.get(key, (result) => {
+    chrome.storage.session.get(key, (result) => {
       if (
         result[key] &&
         Date.now() - result[key].timestamp < CACHE_EXPIRATION
@@ -379,7 +382,7 @@ async function getCachedResult(key) {
 
 async function cacheResult(key, data) {
   return new Promise((resolve) => {
-    chrome.storage.local.set(
+    chrome.storage.session.set(
       { [key]: { data, timestamp: Date.now() } },
       resolve
     );
@@ -395,10 +398,10 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
     if (textNodes.length === 0) {
       throw new Error("No valid text nodes found on the page");
     }
-
-    const { previouslyTranslated = [] } = await chrome.storage.local.get(
-      "previouslyTranslated"
-    );
+    const response = await chrome.runtime.sendMessage({
+      action: "getPreviouslyTranslated",
+    });
+    const previouslyTranslated = response.previouslyTranslated || [];
     const previouslyTranslatedSet = new Set(previouslyTranslated);
 
     let wordsToTranslate;
@@ -430,18 +433,21 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 
     replaceSelectedWords(textNodes, translatedWords);
     addStyles();
-
-    await chrome.storage.local.set({
-      previouslyTranslated: [
-        ...previouslyTranslatedSet,
-        ...translatedWords.map((w) => w.word),
-      ],
+    await chrome.runtime.sendMessage({
+      action: "updatePreviouslyTranslated",
+      words: translatedWords.map((w) => w.word),
     });
+    // await chrome.storage.session.set({
+    //   previouslyTranslated: [
+    //     ...previouslyTranslatedSet,
+    //     ...translatedWords.map((w) => w.word),
+    //   ],
+    // });
 
     return { message: "Translation completed successfully" };
   } catch (error) {
-    console.error("Error during translation:", error);
-    return { message: "Error during translation: " + error.message };
+    console.error("Error during translation: 1", error);
+    return { message: "Error during translation: 2 " + error.message };
   }
 }
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -462,7 +468,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     )
       .then((response) => sendResponse(response))
       .catch((error) =>
-        sendResponse({ message: "Error during translation: " + error.message })
+        sendResponse({ message: "Error during translation: 3 " + error.message })
       );
     return true;
   } else if (request.action === "revertTranslation") {

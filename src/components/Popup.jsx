@@ -11,6 +11,9 @@ const Popup = () => {
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   useEffect(() => {
+    console.log("isEnabled :>> ", isEnabled);
+  }, [isEnabled]);
+  useEffect(() => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
         chrome.tabs.sendMessage(
@@ -18,7 +21,7 @@ const Popup = () => {
           { action: "getState" },
           (response) => {
             if (chrome.runtime.lastError) {
-              // Content script might not be loaded yet, load from local storage
+              // Content script might not be loaded yet, load from session storage
               loadState();
             } else if (response && response.state) {
               // Set state from content script
@@ -28,7 +31,7 @@ const Popup = () => {
               setDifficultyLevel(response.state.difficultyLevel);
               setIsAIEnabled(response.state.isAIEnabled);
             } else {
-              // No state found, load from local storage
+              // No state found, load from session storage
               loadState();
             }
           }
@@ -38,7 +41,7 @@ const Popup = () => {
   }, []);
 
   const loadState = () => {
-    chrome.storage.local.get(
+    chrome.storage.session.get(
       ["isEnabled", "fromLang", "toLang", "difficultyLevel", "isAIEnabled"],
       (result) => {
         setIsEnabled(result.isEnabled || false);
@@ -62,7 +65,7 @@ const Popup = () => {
     } else {
       setStatus("Settings changed. Turn on to apply.");
     }
-    await chrome.storage.local.set({ isEnabled: false });
+    await chrome.storage.session.set({ isEnabled: false });
   };
 
   const revertTranslation = async () => {
@@ -87,9 +90,10 @@ const Popup = () => {
   };
 
   const validateState = () => {
+    console.log("languege check ");
     if (fromLang === toLang) {
       setError("Source and target languages must be different");
-      console.log("fromLang,toLang :>> ", fromLang, toLang);
+      console.log("fromLang,toLang :>> ", fromLang);
       return false;
     }
     if (!difficultyLevel) {
@@ -117,7 +121,7 @@ const Popup = () => {
       isAIEnabled,
     };
 
-    await chrome.storage.local.set(state);
+    await chrome.storage.session.set(state);
 
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
@@ -148,7 +152,7 @@ const Popup = () => {
     if (isEnabled) {
       await handleSettingChange(setIsAIEnabled, newAIState);
     } else {
-      await chrome.storage.local.set({ isAIEnabled: newAIState });
+      await chrome.storage.session.set({ isAIEnabled: newAIState });
       setStatus(
         `AI selection ${
           newAIState ? "enabled" : "disabled"
