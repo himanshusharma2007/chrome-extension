@@ -41,6 +41,23 @@ const commonWords = new Set([
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
 
+function saveState(state) {
+  localStorage.setItem("extensionState", JSON.stringify(state));
+}
+
+function loadState() {
+  const state = localStorage.getItem("extensionState");
+  return state ? JSON.parse(state) : null;
+}
+
+// Add this message listener
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "getState") {
+    const state = loadState();
+    sendResponse({ state: state });
+  }
+  return true;
+});
 
 async function openDB() {
   return new Promise((resolve, reject) => {
@@ -430,7 +447,13 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
-  
+    saveState({
+      isEnabled: true,
+      fromLang: request.fromLang,
+      toLang: request.toLang,
+      difficultyLevel: request.difficultyLevel,
+      isAIEnabled: request.isAIEnabled,
+    });
     replaceWords(
       request.fromLang,
       request.toLang,
@@ -443,7 +466,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       );
     return true;
   } else if (request.action === "revertTranslation") {
-   
+    saveState({
+      isEnabled: false,
+      fromLang: request.fromLang,
+      toLang: request.toLang,
+      difficultyLevel: request.difficultyLevel,
+      isAIEnabled: request.isAIEnabled,
+    });
     revertTranslation()
       .then(() =>
         sendResponse({ message: "Translation reverted successfully" })
@@ -512,7 +541,7 @@ function selectWords(
   }
 
   const totalWords = allWords.reduce((sum, word) => sum + word.frequency, 0);
-
+console.log('totalWords :>> ',totalWords);
   // Filter and sort words
   let eligibleWords = allWords
     .filter((word) => !previouslyTranslated.has(word.word))
@@ -526,30 +555,34 @@ console.log("eligibleWords :>> ", eligibleWords);
       .filter((word) => !previouslyTranslated.has(word.word))
       .sort((a, b) => b.frequency - a.frequency);
   }
+console.log('eligibleWords :>> ', eligibleWords);
   const selectedWords = [];
   const usedIndices = new Set();
 
-  // Add a maximum iteration count to prevent infinite loops
-  const maxIterations = eligibleWords.length * 2;
-  let iterations = 0;
-
   while (
     selectedWords.length < wordCount &&
-    usedIndices.size < eligibleWords.length &&
-    iterations < maxIterations
+    usedIndices.size < eligibleWords.length
   ) {
     const randomIndex = Math.floor(Math.random() * eligibleWords.length);
     if (!usedIndices.has(randomIndex)) {
       selectedWords.push(eligibleWords[randomIndex]);
       usedIndices.add(randomIndex);
     }
-    iterations++;
   }
 
-  console.log(
-    `Selected ${selectedWords.length} words out of ${wordCount} requested`
-  );
+  // If we still don't have enough words, fill with random words from allWords
+  while (selectedWords.length < wordCount) {
+    const randomIndex = Math.floor(Math.random() * allWords.length);
+    const word = allWords[randomIndex];
+    if (
+      !selectedWords.some((w) => w.word === word.word) &&
+      !previouslyTranslated.has(word.word)
+    ) {
+      selectedWords.push(word);
+    }
+  }
 
+  console.log("Selected words:", selectedWords);
   return selectedWords;
 }
 async function translateWords(wordsToTranslate, fromLang, toLang) {
