@@ -104,6 +104,7 @@ const Popup = () => {
     return true;
   };
   const handleToggle = async () => {
+    console.log("extension toggles")
     const newState = !isEnabled;
     if (newState && !validateState()) {
       return;
@@ -248,8 +249,6 @@ const Popup = () => {
         <option value="intermediate">Intermediate</option>
         <option value="advanced">Advanced</option>
       </select>
-
- 
 
       {error && (
         <p className="text-red-500 text-sm mb-2 bg-red-100 p-2 rounded">
