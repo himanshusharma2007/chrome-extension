@@ -249,27 +249,7 @@ const Popup = () => {
         <option value="advanced">Advanced</option>
       </select>
 
-      <div className="mb-4 bg-white p-3 rounded-lg shadow">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-700">
-            Use AI for word selection
-          </span>
-          <Switch
-            checked={useAI}
-            onChange={handleAIToggle}
-            className={`${
-              useAI ? "bg-blue-600" : "bg-gray-200"
-            } relative inline-flex h-6 w-11 items-center rounded-full`}
-          >
-            <span className="sr-only">Use AI</span>
-            <span
-              className={`${
-                useAI ? "translate-x-6" : "translate-x-1"
-              } inline-block h-4 w-4 transform rounded-full bg-white transition`}
-            />
-          </Switch>
-        </div>
-      </div>
+ 
 
       {error && (
         <p className="text-red-500 text-sm mb-2 bg-red-100 p-2 rounded">

@@ -25,7 +25,6 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         background: resolve(__dirname, "src/scripts/background.js"),
         contentScript: resolve(__dirname, "src/scripts/contentScript.js"),
-        contentLogic: resolve(__dirname, "src/scripts/contentLogic.js"),
       },
       output: {
         entryFileNames: "assets/[name].js",
