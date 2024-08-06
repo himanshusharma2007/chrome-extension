@@ -104,6 +104,7 @@ const Popup = () => {
     return true;
   };
   const handleToggle = async () => {
+    console.log("extension toggles")
     const newState = !isEnabled;
     if (newState && !validateState()) {
       return;

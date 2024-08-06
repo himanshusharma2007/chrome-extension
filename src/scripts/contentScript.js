@@ -371,7 +371,6 @@ async function cacheResult(key, data) {
 
 async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
   try {
-    console.log("replace word started")
     const fromCode = languageCodeMap[fromLang] || "en";
     const toCode = languageCodeMap[toLang] || "es";
 
@@ -384,7 +383,7 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
       "previouslyTranslated"
     );
     const previouslyTranslatedSet = new Set(previouslyTranslated);
-console.log("check")
+
     let wordsToTranslate;
     if (isAIEnabled) {
       const text = textNodes.map((node) => node.textContent).join(" ");
@@ -530,27 +529,30 @@ function selectWords(
   const selectedWords = [];
   const usedIndices = new Set();
 
-  // Add a maximum iteration count to prevent infinite loops
-  const maxIterations = eligibleWords.length * 2;
-  let iterations = 0;
-
   while (
     selectedWords.length < wordCount &&
-    usedIndices.size < eligibleWords.length &&
-    iterations < maxIterations
+    usedIndices.size < eligibleWords.length
   ) {
     const randomIndex = Math.floor(Math.random() * eligibleWords.length);
     if (!usedIndices.has(randomIndex)) {
       selectedWords.push(eligibleWords[randomIndex]);
       usedIndices.add(randomIndex);
     }
-    iterations++;
   }
 
-  console.log(
-    `Selected ${selectedWords.length} words out of ${wordCount} requested`
-  );
+  // If we still don't have enough words, fill with random words from allWords
+  while (selectedWords.length < wordCount) {
+    const randomIndex = Math.floor(Math.random() * allWords.length);
+    const word = allWords[randomIndex];
+    if (
+      !selectedWords.some((w) => w.word === word.word) &&
+      !previouslyTranslated.has(word.word)
+    ) {
+      selectedWords.push(word);
+    }
+  }
 
+  console.log("Selected words:", selectedWords);
   return selectedWords;
 }
 async function translateWords(wordsToTranslate, fromLang, toLang) {
@@ -566,9 +568,8 @@ async function translateWords(wordsToTranslate, fromLang, toLang) {
           return { word, translation: cachedTranslation };
         }
         const translation = await translateSingleWord(word, fromLang, toLang);
-        console.log('translation :>> ',translation);
         if (translation && translation !== word) {
-          // await cacheTranslation(word, translation, fromLang, toLang);
+          await cacheTranslation(word, translation, fromLang, toLang);
           return { word, translation };
         }
       }
@@ -579,16 +580,13 @@ async function translateWords(wordsToTranslate, fromLang, toLang) {
   return translations.filter((item) => item !== null);
 }
 async function translateSingleWord(word, fromLang, toLang) {
-  console.log('word to translate  :>> ',word);
   const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
     word
   )}&langpair=${fromLang}|${toLang}`;
   try {
     const response = await fetch(apiUrl);
     const data = await response.json();
-    console.log('data :>> ',data);
     if (data.responseStatus === 200) {
-      console.log("check 200")
       return data.responseData.translatedText;
     } else {
       console.error(

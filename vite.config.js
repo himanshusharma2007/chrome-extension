@@ -2,10 +2,14 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "path";
 import fs from "fs-extra";
+import { nodeResolve } from "@rollup/plugin-node-resolve";
+import commonjs from "@rollup/plugin-commonjs";
 
 export default defineConfig({
   plugins: [
     react(),
+    nodeResolve(),
+    commonjs(),
     {
       name: "copy-manifest",
       writeBundle() {
@@ -23,18 +27,17 @@ export default defineConfig({
         contentScript: resolve(__dirname, "src/scripts/contentScript.js"),
       },
       output: {
-        entryFileNames: (chunkInfo) => {
-          if (
-            chunkInfo.name === "contentScript" ||
-            chunkInfo.name === "background"
-          ) {
-            return `assets/[name].js`;
-          }
-          return `assets/[name].js`;
-        },
-        chunkFileNames: `assets/[name].js`,
-        assetFileNames: `assets/[name].[ext]`,
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name].[ext]",
+        format: "es",
       },
     },
+  },
+  optimizeDeps: {
+    include: [
+      "@tensorflow/tfjs",
+      "@tensorflow-models/universal-sentence-encoder",
+    ],
   },
 });
