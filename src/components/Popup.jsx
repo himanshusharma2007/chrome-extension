@@ -10,31 +10,16 @@ const Popup = () => {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
   useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(
-          tabs[0].id,
-          { action: "getState" },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              // Content script might not be loaded yet, load from local storage
-              loadState();
-            } else if (response && response.state) {
-              // Set state from content script
-              setIsEnabled(response.state.isEnabled);
-              setFromLang(response.state.fromLang);
-              setToLang(response.state.toLang);
-              setDifficultyLevel(response.state.difficultyLevel);
-              setIsAIEnabled(response.state.isAIEnabled);
-            } else {
-              // No state found, load from local storage
-              loadState();
-            }
-          }
-        );
+    loadState();
+    const listener = (message) => {
+      if (message.action === "stateReset") {
+        loadState();
       }
-    });
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
   const loadState = () => {
@@ -98,6 +83,7 @@ const Popup = () => {
     setError("");
     return true;
   };
+
   const handleToggle = async () => {
     const newState = !isEnabled;
     if (newState && !validateState()) {
@@ -106,23 +92,23 @@ const Popup = () => {
     setIsLoading(true);
     setStatus("Processing...");
     setIsEnabled(newState);
-
-    const state = {
+    await chrome.storage.local.set({
       isEnabled: newState,
       fromLang,
       toLang,
       difficultyLevel,
       isAIEnabled,
-    };
-
-    await chrome.storage.local.set(state);
+    });
 
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
         try {
           const response = await chrome.tabs.sendMessage(tabs[0].id, {
             action: newState ? "startTranslation" : "revertTranslation",
-            ...state,
+            fromLang,
+            toLang,
+            difficultyLevel,
+            isAIEnabled,
           });
           setStatus(response.message);
         } catch (error) {
@@ -132,6 +118,7 @@ const Popup = () => {
     });
     setIsLoading(false);
   };
+
   const handleLanguageChange = (setter) => (e) => {
     handleSettingChange(setter, e.target.value);
   };
@@ -158,7 +145,7 @@ const Popup = () => {
   return (
     <div className="w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
       <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-        Learn While Browsing
+        Language Learner
       </h1>
 
       <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
@@ -184,7 +171,7 @@ const Popup = () => {
 
       <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
         <span className="text-sm font-medium text-gray-700">
-          AI-powered word selection
+          AI-powered selection
         </span>
         <Switch
           checked={isAIEnabled}

@@ -38,58 +38,7 @@ const commonWords = new Set([
   "at",
   "has",
 ]);
-const dbName = "LanguageLearnerCache";
-const storeName = "translations";
 
-function saveState(state) {
-  localStorage.setItem("extensionState", JSON.stringify(state));
-}
-
-function loadState() {
-  const state = localStorage.getItem("extensionState");
-  return state ? JSON.parse(state) : null;
-}
-
-// Add this message listener
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "getState") {
-    const state = loadState();
-    sendResponse({ state: state });
-  }
-  return true;
-});
-
-async function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(dbName, 1);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      db.createObjectStore(storeName, { keyPath: "key" });
-    };
-  });
-}
-
-async function getCachedTranslation(word, fromLang, toLang) {
-  const db = await openDB();
-  const transaction = db.transaction(storeName, "readonly");
-  const store = transaction.objectStore(storeName);
-  const key = `${word}_${fromLang}_${toLang}`;
-  return new Promise((resolve) => {
-    const request = store.get(key);
-    request.onsuccess = () =>
-      resolve(request.result ? request.result.translation : null);
-  });
-}
-
-async function cacheTranslation(word, translation, fromLang, toLang) {
-  const db = await openDB();
-  const transaction = db.transaction(storeName, "readwrite");
-  const store = transaction.objectStore(storeName);
-  const key = `${word}_${fromLang}_${toLang}`;
-  store.put({ key, translation, timestamp: Date.now() });
-}
 async function selectWordsAI(text, difficultyLevel, retries = 3) {
   console.log("Starting selectWordsAI function");
   console.log("Text length:", text.length);
@@ -110,47 +59,58 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     const chunks = splitTextIntoChunks(text, 500);
     console.log("Number of chunks:", chunks.length);
 
-    // Determine wordsPerChunk dynamically based on difficulty level
-    const wordsPerChunk = getWordsPerChunk(difficultyLevel);
-    console.log("Words per chunk:", wordsPerChunk);
+    let allMeaningfulWords = [];
 
-    const chunkPromises = chunks.map(async (chunk, index) => {
-      console.log(`Processing chunk ${index + 1} of ${chunks.length}`);
-      const result = await fetchAIResult(chunk);
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(`Processing chunk ${i + 1} of ${chunks.length}`);
+      const chunk = chunks[i];
+
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inputs: chunk,
+          parameters: {
+            candidate_labels: ["common", "uncommon", "rare"],
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error("API Error Response:", errorBody);
+        throw new Error(
+          `HTTP error! status: ${response.status}, body: ${errorBody}`
+        );
+      }
+
+      const result = await response.json();
+      console.log("Full API Response:", JSON.stringify(result, null, 2));
+
+      if (!result.scores || !result.labels || !result.sequence) {
+        console.error("Unexpected API response structure:", result);
+        throw new Error("Unexpected API response structure");
+      }
+
       const chunkWords = chunk.split(/\s+/);
-      return selectMeaningfulWords(
+      console.log("Number of words in chunk:", chunkWords.length);
+
+      const meaningfulWords = selectMeaningfulWords(
         chunkWords,
         result,
-        difficultyLevel,
-        wordsPerChunk
+        difficultyLevel
       );
-    });
+      console.log("Meaningful words selected from chunk:", meaningfulWords);
 
-    const meaningfulWordsPerChunk = await Promise.all(chunkPromises);
-    const allMeaningfulWords = meaningfulWordsPerChunk.flat();
+      allMeaningfulWords = allMeaningfulWords.concat(meaningfulWords);
+    }
 
-    console.log("Total meaningful words selected:", allMeaningfulWords.length);
-
-    // Determine MAX_AI_WORDS dynamically based on difficulty level and number of chunks
-    const MAX_AI_WORDS = Math.min(chunks.length * wordsPerChunk, 100); // Cap at 100 words
-    console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
-
-    const selectedWords = [];
-    const selectedWordsSet = new Set(); // To keep track of unique words
 
     // Randomly select MAX_AI_WORDS from allMeaningfulWords
-    while (
-      selectedWords.length < MAX_AI_WORDS &&
-      allMeaningfulWords.length > 0
-    ) {
-      const randomIndex = Math.floor(Math.random() * allMeaningfulWords.length);
-      const word = allMeaningfulWords[randomIndex].toLowerCase();
-      if (!selectedWordsSet.has(word)) {
-        selectedWordsSet.add(word);
-        selectedWords.push(allMeaningfulWords[randomIndex]);
-        allMeaningfulWords.splice(randomIndex, 1);
-      }
-    }
+    const selectedWords = randomlySelectWords(allMeaningfulWords, MAX_AI_WORDS);
 
     console.log("AI selectedWords:", selectedWords);
 
@@ -174,50 +134,7 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     return selectedWordsWithNodes;
   } catch (error) {
     console.error("Error in AI word selection:", error);
-    if (retries > 0) {
-      console.log(`Retrying... (${retries} attempts left)`);
-      return selectWordsAI(text, difficultyLevel, retries - 1);
-    }
     return selectWords(getAllWords(getTextNodes()), difficultyLevel);
-  }
-}
-
-async function fetchAIResult(chunk) {
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inputs: chunk,
-      parameters: {
-        candidate_labels: ["common", "uncommon", "rare"],
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error("API Error Response:", errorBody);
-    throw new Error(
-      `HTTP error! status: ${response.status}, body: ${errorBody}`
-    );
-  }
-
-  return await response.json();
-}
-
-function getWordsPerChunk(difficultyLevel) {
-  switch (difficultyLevel) {
-    case "beginner":
-      return 10;
-    case "intermediate":
-      return 15;
-    case "advanced":
-      return 20;
-    default:
-      return 15;
   }
 }
 
@@ -230,17 +147,7 @@ function splitTextIntoChunks(text, chunkSize) {
   return chunks;
 }
 
-function randomlySelectWords(words, count) {
-  const shuffled = words.sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, Math.min(count, words.length));
-}
-
-function selectMeaningfulWords(
-  words,
-  aiResult,
-  difficultyLevel,
-  wordsPerChunk
-) {
+function selectMeaningfulWords(words, aiResult, difficultyLevel) {
   console.log("Selecting meaningful words");
   console.log("Difficulty level:", difficultyLevel);
   console.log("AI result:", aiResult);
@@ -275,12 +182,6 @@ function selectMeaningfulWords(
   const meaningfulWords = words.filter((word) => {
     console.log(`Analyzing word: ${word}`);
 
-    // Check if the word contains only alphabetic characters
-    if (!/^[a-zA-Z]+$/.test(word)) {
-      console.log(`  Rejected: Contains non-alphabetic characters`);
-      return false;
-    }
-
     if (word.length < 4) {
       console.log(`  Rejected: Word length < 4`);
       return false;
@@ -305,13 +206,16 @@ function selectMeaningfulWords(
   });
 
   console.log("Meaningful words:", meaningfulWords);
-  return randomlySelectWords(meaningfulWords, wordsPerChunk);
+  return meaningfulWords;
+}
+function randomlySelectWords(words, count) {
+  const shuffled = words.sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, count);
 }
 
 function findNodeForWord(word, textNodes) {
-  const wordRegex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "i");
   for (let node of textNodes) {
-    if (wordRegex.test(node.textContent)) {
+    if (node.textContent.toLowerCase().includes(word.toLowerCase())) {
       return node;
     }
   }
@@ -447,13 +351,6 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
-    saveState({
-      isEnabled: true,
-      fromLang: request.fromLang,
-      toLang: request.toLang,
-      difficultyLevel: request.difficultyLevel,
-      isAIEnabled: request.isAIEnabled,
-    });
     replaceWords(
       request.fromLang,
       request.toLang,
@@ -464,15 +361,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((error) =>
         sendResponse({ message: "Error during translation: " + error.message })
       );
-    return true;
+    return true; // Indicates that the response is sent asynchronously
   } else if (request.action === "revertTranslation") {
-    saveState({
-      isEnabled: false,
-      fromLang: request.fromLang,
-      toLang: request.toLang,
-      difficultyLevel: request.difficultyLevel,
-      isAIEnabled: request.isAIEnabled,
-    });
     revertTranslation()
       .then(() =>
         sendResponse({ message: "Translation reverted successfully" })
@@ -482,7 +372,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           message: "Error reverting translation: " + error.message,
         })
       );
-    return true;
+    return true; // Indicates that the response is sent asynchronously
   }
 });
 function getAllWords(textNodes) {
@@ -491,9 +381,9 @@ function getAllWords(textNodes) {
 
   textNodes.forEach((node) => {
     if (node && node.textContent) {
-      const words = node.textContent.trim().split(/\s+/);
+      const words = node.textContent.trim().toLowerCase().split(/\s+/);
       words.forEach((word) => {
-        if (wordRegex.test(word) && !commonWords.has(word.toLowerCase())) {
+        if (wordRegex.test(word) && !commonWords.has(word)) {
           allWords.set(word, (allWords.get(word) || 0) + 1);
         }
       });
@@ -508,7 +398,7 @@ function getAllWords(textNodes) {
         (node) =>
           node &&
           node.textContent &&
-          node.textContent.toLowerCase().includes(word.toLowerCase())
+          node.textContent.toLowerCase().includes(word)
       ),
     }))
     .filter((item) => item.node); // Only keep items where a valid node was found
@@ -541,13 +431,12 @@ function selectWords(
   }
 
   const totalWords = allWords.reduce((sum, word) => sum + word.frequency, 0);
-console.log('totalWords :>> ',totalWords);
+
   // Filter and sort words
   let eligibleWords = allWords
     .filter((word) => !previouslyTranslated.has(word.word))
     .filter((word) => word.frequency / totalWords <= frequencyThreshold)
     .sort((a, b) => b.frequency - a.frequency);
-console.log("eligibleWords :>> ", eligibleWords);
 
   // If we don't have enough eligible words, relax the frequency threshold
   if (eligibleWords.length < wordCount) {
@@ -555,7 +444,7 @@ console.log("eligibleWords :>> ", eligibleWords);
       .filter((word) => !previouslyTranslated.has(word.word))
       .sort((a, b) => b.frequency - a.frequency);
   }
-console.log('eligibleWords :>> ', eligibleWords);
+
   const selectedWords = [];
   const usedIndices = new Set();
 
@@ -585,29 +474,22 @@ console.log('eligibleWords :>> ', eligibleWords);
   console.log("Selected words:", selectedWords);
   return selectedWords;
 }
-async function translateWords(wordsToTranslate, fromLang, toLang) {
-  const translations = await Promise.all(
-    wordsToTranslate.map(async (word) => {
-      if (typeof word === "string" && word.trim() !== "") {
-        const cachedTranslation = await getCachedTranslation(
-          word,
-          fromLang,
-          toLang
-        );
-        if (cachedTranslation) {
-          return { word, translation: cachedTranslation };
-        }
-        const translation = await translateSingleWord(word, fromLang, toLang);
-        if (translation && translation !== word) {
-          await cacheTranslation(word, translation, fromLang, toLang);
-          return { word, translation };
-        }
-      }
-      return null; // Return null for invalid translations
-    })
-  );
 
-  return translations.filter((item) => item !== null);
+async function translateWords(wordsToTranslate, fromLang, toLang) {
+  const translations = {};
+
+  for (let word of wordsToTranslate) {
+    if (typeof word === "string" && word.trim() !== "") {
+      translations[word] = await translateSingleWord(word, fromLang, toLang);
+    }
+  }
+
+  return wordsToTranslate
+    .filter((word) => typeof word === "string" && word.trim() !== "")
+    .map((word) => ({
+      word: word,
+      translation: translations[word] || word,
+    }));
 }
 async function translateSingleWord(word, fromLang, toLang) {
   const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
@@ -646,13 +528,12 @@ function replaceSelectedWords(textNodes, translatedWords) {
   textNodes.forEach((node) => {
     if (node && node.textContent) {
       let newContent = node.textContent;
-      translatedWords.forEach(({ word, translation }) => {
-        if (translation && translation !== word) {
-          const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
-          newContent = newContent.replace(regex, (match) => {
-            return `<span class="translated-word" data-original="${match}">${translation}</span>`;
-          });
-        }
+      translatedWords.forEach(({ word }) => {
+        const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
+        newContent = newContent.replace(regex, (match) => {
+          const translation = translationMap.get(match.toLowerCase());
+          return `<span class="translated-word" data-original="${match}">${translation}</span>`;
+        });
       });
 
       if (newContent !== node.textContent) {
@@ -660,7 +541,6 @@ function replaceSelectedWords(textNodes, translatedWords) {
       }
     }
   });
-
   // Add click event listeners to translated words
   document.querySelectorAll(".translated-word").forEach((word) => {
     word.addEventListener("click", function () {
@@ -671,11 +551,6 @@ function replaceSelectedWords(textNodes, translatedWords) {
   });
 }
 
-// Helper function to escape special characters in regex
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function replaceNodeContent(node, newContent) {
   const range = document.createRange();
   range.selectNode(node);
@@ -684,6 +559,11 @@ function replaceNodeContent(node, newContent) {
   if (parent) {
     parent.replaceChild(fragment, node);
   }
+}
+
+// Helper function to escape special characters in regex
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getTextNodes() {
