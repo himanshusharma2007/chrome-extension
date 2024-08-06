@@ -529,30 +529,27 @@ function selectWords(
   const selectedWords = [];
   const usedIndices = new Set();
 
+  // Add a maximum iteration count to prevent infinite loops
+  const maxIterations = eligibleWords.length * 2;
+  let iterations = 0;
+
   while (
     selectedWords.length < wordCount &&
-    usedIndices.size < eligibleWords.length
+    usedIndices.size < eligibleWords.length &&
+    iterations < maxIterations
   ) {
     const randomIndex = Math.floor(Math.random() * eligibleWords.length);
     if (!usedIndices.has(randomIndex)) {
       selectedWords.push(eligibleWords[randomIndex]);
       usedIndices.add(randomIndex);
     }
+    iterations++;
   }
 
-  // If we still don't have enough words, fill with random words from allWords
-  while (selectedWords.length < wordCount) {
-    const randomIndex = Math.floor(Math.random() * allWords.length);
-    const word = allWords[randomIndex];
-    if (
-      !selectedWords.some((w) => w.word === word.word) &&
-      !previouslyTranslated.has(word.word)
-    ) {
-      selectedWords.push(word);
-    }
-  }
+  console.log(
+    `Selected ${selectedWords.length} words out of ${wordCount} requested`
+  );
 
-  console.log("Selected words:", selectedWords);
   return selectedWords;
 }
 async function translateWords(wordsToTranslate, fromLang, toLang) {
