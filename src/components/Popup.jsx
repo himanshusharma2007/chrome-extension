@@ -10,20 +10,38 @@ const Popup = () => {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
   useEffect(() => {
-    loadState();
-    const listener = (message) => {
-      if (message.action === "stateReset") {
-        loadState();
+    console.log("isEnabled :>> ", isEnabled);
+  }, [isEnabled]);
+  useEffect(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          { action: "getState" },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              // Content script might not be loaded yet, load from session storage
+              loadState();
+            } else if (response && response.state) {
+              // Set state from content script
+              setIsEnabled(response.state.isEnabled);
+              setFromLang(response.state.fromLang);
+              setToLang(response.state.toLang);
+              setDifficultyLevel(response.state.difficultyLevel);
+              setIsAIEnabled(response.state.isAIEnabled);
+            } else {
+              // No state found, load from session storage
+              loadState();
+            }
+          }
+        );
       }
-    };
-    chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    });
   }, []);
 
   const loadState = () => {
-    chrome.storage.local.get(
+    chrome.storage.session.get(
       ["isEnabled", "fromLang", "toLang", "difficultyLevel", "isAIEnabled"],
       (result) => {
         setIsEnabled(result.isEnabled || false);
@@ -47,7 +65,7 @@ const Popup = () => {
     } else {
       setStatus("Settings changed. Turn on to apply.");
     }
-    await chrome.storage.local.set({ isEnabled: false });
+    await chrome.storage.session.set({ isEnabled: false });
   };
 
   const revertTranslation = async () => {
@@ -72,8 +90,10 @@ const Popup = () => {
   };
 
   const validateState = () => {
+    console.log("languege check ");
     if (fromLang === toLang) {
       setError("Source and target languages must be different");
+      console.log("fromLang,toLang :>> ", fromLang);
       return false;
     }
     if (!difficultyLevel) {
@@ -83,32 +103,33 @@ const Popup = () => {
     setError("");
     return true;
   };
-
   const handleToggle = async () => {
+    console.log("extension toggles")
     const newState = !isEnabled;
     if (newState && !validateState()) {
       return;
     }
     setIsLoading(true);
-    setStatus("Processing...");
     setIsEnabled(newState);
-    await chrome.storage.local.set({
+
+    setStatus("Processing...");
+
+    const state = {
       isEnabled: newState,
       fromLang,
       toLang,
       difficultyLevel,
       isAIEnabled,
-    });
+    };
+
+    await chrome.storage.session.set(state);
 
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
         try {
           const response = await chrome.tabs.sendMessage(tabs[0].id, {
             action: newState ? "startTranslation" : "revertTranslation",
-            fromLang,
-            toLang,
-            difficultyLevel,
-            isAIEnabled,
+            ...state,
           });
           setStatus(response.message);
         } catch (error) {
@@ -118,7 +139,6 @@ const Popup = () => {
     });
     setIsLoading(false);
   };
-
   const handleLanguageChange = (setter) => (e) => {
     handleSettingChange(setter, e.target.value);
   };
@@ -133,7 +153,7 @@ const Popup = () => {
     if (isEnabled) {
       await handleSettingChange(setIsAIEnabled, newAIState);
     } else {
-      await chrome.storage.local.set({ isAIEnabled: newAIState });
+      await chrome.storage.session.set({ isAIEnabled: newAIState });
       setStatus(
         `AI selection ${
           newAIState ? "enabled" : "disabled"
@@ -145,7 +165,7 @@ const Popup = () => {
   return (
     <div className="w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
       <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-        Language Learner
+        Learn While Browsing
       </h1>
 
       <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
@@ -171,7 +191,7 @@ const Popup = () => {
 
       <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
         <span className="text-sm font-medium text-gray-700">
-          AI-powered selection
+          AI-powered word selection
         </span>
         <Switch
           checked={isAIEnabled}
