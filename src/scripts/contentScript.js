@@ -41,7 +41,6 @@ const commonWords = new Set([
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
 
-
 async function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, 1);
@@ -430,7 +429,6 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
-  
     replaceWords(
       request.fromLang,
       request.toLang,
@@ -443,7 +441,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       );
     return true;
   } else if (request.action === "revertTranslation") {
-   
     revertTranslation()
       .then(() =>
         sendResponse({ message: "Translation reverted successfully" })
@@ -515,15 +512,12 @@ function selectWords(
 
   // Filter and sort words
   let eligibleWords = allWords
-    .filter((word) => !previouslyTranslated.has(word.word))
     .filter((word) => word.frequency / totalWords <= frequencyThreshold)
     .sort((a, b) => b.frequency - a.frequency);
 
   // If we don't have enough eligible words, relax the frequency threshold
   if (eligibleWords.length < wordCount) {
-    eligibleWords = allWords
-      .filter((word) => !previouslyTranslated.has(word.word))
-      .sort((a, b) => b.frequency - a.frequency);
+    eligibleWords = allWords.sort((a, b) => b.frequency - a.frequency);
   }
 
   const selectedWords = [];
