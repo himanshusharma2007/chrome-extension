@@ -117,23 +117,32 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     const MAX_AI_WORDS = Math.min(chunks.length * wordsPerChunk, 100); // Cap at 100 words
     console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
 
-    const selectedWords = [];
-    const selectedWordsSet = new Set(); // To keep track of unique words
+    const selectedWordsSet = new Set();
 
-    // Randomly select MAX_AI_WORDS from allMeaningfulWords
     while (
-      selectedWords.length < MAX_AI_WORDS &&
+      selectedWordsSet.size < MAX_AI_WORDS &&
       allMeaningfulWords.length > 0
     ) {
       const randomIndex = Math.floor(Math.random() * allMeaningfulWords.length);
       const word = allMeaningfulWords[randomIndex].toLowerCase();
       if (!selectedWordsSet.has(word)) {
         selectedWordsSet.add(word);
-        selectedWords.push(allMeaningfulWords[randomIndex]);
+      } else {
+        // If the word is a duplicate, replace it with a new word from allMeaningfulWords
         allMeaningfulWords.splice(randomIndex, 1);
+        if (allMeaningfulWords.length === 0) {
+          break; // Exit the loop if there are no more words left in allMeaningfulWords
+        }
+        const newRandomIndex = Math.floor(
+          Math.random() * allMeaningfulWords.length
+        );
+        const newWord = allMeaningfulWords[newRandomIndex].toLowerCase();
+        selectedWordsSet.add(newWord);
+        allMeaningfulWords.splice(newRandomIndex, 1);
       }
     }
 
+    const selectedWords = Array.from(selectedWordsSet);
     console.log("AI selectedWords:", selectedWords);
 
     if (selectedWords.length === 0) {
