@@ -40,7 +40,7 @@ function initializeTabState(tabId) {
 function resetState(tabId) {
   console.log(`Resetting state for tab ${tabId}`);
   if (tabStates[tabId]) {
-    initializeTabState(tabId);
+    delete tabStates[tabId];
     chrome.tabs.sendMessage(tabId, { action: "resetState" });
   }
   if (timeouts[tabId]) {
@@ -61,9 +61,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   delete tabStates[tabId];
 });
 
-// Listen for tab activation
 chrome.tabs.onActivated.addListener((activeInfo) => {
   console.log(`Tab ${activeInfo.tabId} activated`);
+
+  // Reset the state to the initial state
+  initializeTabState(activeInfo.tabId);
+
+  // Load the state from session storage (if any)
   chrome.storage.session.get(`tabState_${activeInfo.tabId}`, (result) => {
     if (result[`tabState_${activeInfo.tabId}`]) {
       tabStates[activeInfo.tabId] = result[`tabState_${activeInfo.tabId}`];
@@ -71,18 +75,16 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
         `Loaded state from storage for tab ${activeInfo.tabId}`,
         tabStates[activeInfo.tabId]
       );
-    } else if (!tabStates[activeInfo.tabId]) {
-      initializeTabState(activeInfo.tabId);
     }
     updateBadge(activeInfo.tabId);
   });
 });
 
-// Listen for tab updates
+// chrome.tabs.onUpdated.addListener
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   console.log(`Tab ${tabId} updated, status: ${changeInfo.status}`);
   if (changeInfo.status === "loading") {
-    // Reset the state when the tab starts loading (i.e., on reload)
+    // Reset the state to the initial state
     initializeTabState(tabId);
   }
   if (changeInfo.status === "complete") {
