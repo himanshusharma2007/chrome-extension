@@ -2,7 +2,7 @@
 
 const API_URL =
   "https://api-inference.huggingface.co/models/facebook/bart-large-mnli";
-const API_KEY = "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"; // Replace with your actual API key
+const API_KEY = import.meta.env.API_KEY; // Replace with your actual API key
 const MAX_AI_WORDS = 20; // Maximum number of words to select using AI
 const CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
 const languageCodeMap = {
