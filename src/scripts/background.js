@@ -8,31 +8,50 @@ const tabStates = {};
 // Function to initialize or reset the state for a tab
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 const timeouts = {};
-
+function loadSettings(callback) {
+  chrome.storage.sync.get(
+    [
+      "defaultAIEnabled",
+      "defaultFromLang",
+      "defaultToLang",
+      "defaultDifficulty",
+    ],
+    (result) => {
+      callback({
+        isAIEnabled: result.defaultAIEnabled ?? false,
+        fromLang: result.defaultFromLang ?? "English",
+        toLang: result.defaultToLang ?? "Spanish",
+        difficultyLevel: result.defaultDifficulty ?? "intermediate",
+      });
+    }
+  );
+}
 // Modify the initializeTabState function
 function initializeTabState(tabId) {
   console.log(`Initializing state for tab ${tabId}`);
-  tabStates[tabId] = {
-    isEnabled: false,
-    fromLang: "English",
-    toLang: "Spanish",
-    difficultyLevel: "",
-    isAIEnabled: false,
-  };
+  loadSettings((settings) => {
+    tabStates[tabId] = {
+      isEnabled: false,
+      ...settings,
+    };
 
-  // Clear any existing timeout
-  if (timeouts[tabId]) {
-    clearTimeout(timeouts[tabId]);
-  }
+    // Clear any existing timeout
+    if (timeouts[tabId]) {
+      clearTimeout(timeouts[tabId]);
+    }
 
-  // Set a new timeout
-  timeouts[tabId] = setTimeout(() => {
-    resetState(tabId);
-  }, SESSION_TIMEOUT);
+    // Set a new timeout
+    timeouts[tabId] = setTimeout(() => {
+      resetState(tabId);
+    }, SESSION_TIMEOUT);
 
-  // Save the state to session storage
-  chrome.storage.session.set({ [`tabState_${tabId}`]: tabStates[tabId] }, () => {
-    console.log(`State saved to session storage for tab ${tabId}`);
+    // Save the state to session storage
+    chrome.storage.session.set(
+      { [`tabState_${tabId}`]: tabStates[tabId] },
+      () => {
+        console.log(`State saved to session storage for tab ${tabId}`);
+      }
+    );
   });
 }
 

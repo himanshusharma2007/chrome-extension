@@ -38,6 +38,12 @@ const commonWords = new Set([
   "at",
   "has",
 ]);
+const colorOptions = [
+  { bg: "rgba(255, 249, 219, 0.5)", border: "#f2c94c", text: "text-gray-800" },
+  { bg: "rgba(230, 243, 255, 0.5)", border: "#4a90e2", text: "text-gray-800" },
+  { bg: "rgba(243, 230, 255, 0.5)", border: "#9b51e0", text: "text-gray-800" },
+  { bg: "rgba(230, 255, 237, 0.5)", border: "#27ae60", text: "text-gray-800" },
+];
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
 
@@ -601,12 +607,7 @@ async function translateSingleWord(word, fromLang, toLang) {
     return word; // Return original word if translation fails
   }
 }
-// Add this function to contentScript.js
-function speakWord(word, lang) {
-  const utterance = new SpeechSynthesisUtterance(word);
-  utterance.lang = lang;
-  speechSynthesis.speak(utterance);
-}
+
 function replaceSelectedWords(textNodes, translatedWords) {
   // Create a map of original words to their translations
   const translationMap = new Map(
@@ -692,12 +693,51 @@ function isNodeVisible(node) {
   );
 }
 
+let highlightStyle = {
+  bg: "rgba(230, 243, 255, 0.5)",
+  border: "#4a90e2",
+  text: "text-gray-800",
+};
+let textToSpeechEnabled = true;
+
+// Add this function to load settings
+function loadSettings() {
+  chrome.storage.sync.get(
+    [
+      "selectedStyle",
+      "textToSpeechEnabled",
+      "defaultAIEnabled",
+      "defaultFromLang",
+      "defaultToLang",
+      "defaultDifficulty",
+    ],
+    (result) => {
+      const styleIndex = result.selectedStyle ?? 0;
+      highlightStyle = colorOptions[styleIndex];
+      textToSpeechEnabled = result.textToSpeechEnabled ?? true;
+      isAIEnabled = result.defaultAIEnabled ?? false;
+      fromLang = result.defaultFromLang ?? "English";
+      toLang = result.defaultToLang ?? "Spanish";
+      difficultyLevel = result.defaultDifficulty ?? "intermediate";
+    }
+  );
+}
+
+// Call loadSettings at the beginning of the script and whenever settings change
+loadSettings();
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === "sync") {
+    loadSettings();
+  }
+});
+
+// Modify the addStyles function to use the selected highlight style
 function addStyles() {
   const style = document.createElement("style");
   style.textContent = `
     .translated-word {
-      background-color: rgba(230, 243, 255, 0.5);
-      border-bottom: 2px solid #4a90e2;
+      background-color: ${highlightStyle.bg};
+      border-bottom: 2px solid ${highlightStyle.border};
       padding: 0 2px;
       margin: 0 1px;
       border-radius: 3px;
@@ -708,7 +748,7 @@ function addStyles() {
     }
 
     .translated-word:hover {
-      background-color: rgba(230, 243, 255, 0.8);
+      background-color: ${highlightStyle.bg.replace("0.5", "0.8")};
     }
 
     .translated-word::after {
@@ -752,8 +792,17 @@ function addStyles() {
     .translated-word:hover::before {
       display: block;
     }
-`;
+  `;
   document.head.appendChild(style);
+}
+
+// Modify the speakWord function to respect the textToSpeechEnabled setting
+function speakWord(word, lang) {
+  if (textToSpeechEnabled) {
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.lang = lang;
+    speechSynthesis.speak(utterance);
+  }
 }
 
 function revertTranslation() {

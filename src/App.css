@@ -1,3 +1,12 @@
+.custom-toast {
+  width: 70% !important;
+}
+
+.custom-toast-body {
+  font-size: 14px;
+}
+
+/* Add these styles for the switch if you haven't already */
 .switch {
   position: relative;
   display: inline-block;

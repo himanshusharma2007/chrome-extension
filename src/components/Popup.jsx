@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Switch } from "@headlessui/react";
+import { CiSettings } from "react-icons/ci";
 
-const Popup = () => {
+const Popup = ({ setIsSttings }) => {
   const [isEnabled, setIsEnabled] = useState(false);
   const [fromLang, setFromLang] = useState("English");
   const [toLang, setToLang] = useState("Spanish");
@@ -10,48 +11,116 @@ const Popup = () => {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  useEffect(() => {
-    console.log("isEnabled :>> ", isEnabled);
-  }, [isEnabled]);
-  useEffect(() => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(
-          tabs[0].id,
-          { action: "getState" },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              // Content script might not be loaded yet, load from session storage
-              loadState();
-            } else if (response && response.state) {
-              // Set state from content script
-              setIsEnabled(response.state.isEnabled);
-              setFromLang(response.state.fromLang);
-              setToLang(response.state.toLang);
-              setDifficultyLevel(response.state.difficultyLevel);
-              setIsAIEnabled(response.state.isAIEnabled);
-            } else {
-              // No state found, load from session storage
-              loadState();
-            }
-          }
-        );
-      }
-    });
-  }, []);
+ useEffect(() => {
+   loadSettings();
+   loadState();
+
+   // Add listener for storage changes
+   const handleStorageChange = (changes, area) => {
+     if (area === "sync") {
+       loadSettings();
+     }
+   };
+
+   chrome.storage.onChanged.addListener(handleStorageChange);
+
+   // Cleanup listener on unmount
+   return () => {
+     chrome.storage.onChanged.removeListener(handleStorageChange);
+   };
+ }, []);
+
+ useEffect(() => {
+   console.log("isEnabled :>> ", isEnabled);
+ }, [isEnabled]);
+ useEffect(() => {
+   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+     if (tabs[0]) {
+       chrome.tabs.sendMessage(
+         tabs[0].id,
+         { action: "getState" },
+         (response) => {
+           if (chrome.runtime.lastError) {
+             // Content script might not be loaded yet, load from session storage
+             loadState();
+           } else if (response && response.state) {
+             // Set state from content script
+             setIsEnabled(response.state.isEnabled);
+             setFromLang(response.state.fromLang);
+             setToLang(response.state.toLang);
+             setDifficultyLevel(response.state.difficultyLevel);
+             setIsAIEnabled(response.state.isAIEnabled);
+           } else {
+             // No state found, load from session storage
+             loadState();
+           }
+         }
+       );
+     }
+   });
+ }, []);
+
+
+ const loadSettings = () => {
+   chrome.storage.sync.get(
+     [
+       "defaultAIEnabled",
+       "defaultFromLang",
+       "defaultToLang",
+       "defaultDifficulty",
+     ],
+     (result) => {
+       setIsAIEnabled(result.defaultAIEnabled ?? false);
+       setFromLang(result.defaultFromLang ?? "English");
+       setToLang(result.defaultToLang ?? "Spanish");
+       setDifficultyLevel(result.defaultDifficulty ?? "");
+
+       // Update the current state immediately
+       updateCurrentState({
+         isAIEnabled: result.defaultAIEnabled ?? false,
+         fromLang: result.defaultFromLang ?? "English",
+         toLang: result.defaultToLang ?? "Spanish",
+         difficultyLevel: result.defaultDifficulty ?? "",
+       });
+     }
+   );
+ };
+
+ const updateCurrentState = (newState) => {
+   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+     if (tabs[0]) {
+       chrome.storage.session.get(`tabState_${tabs[0].id}`, (result) => {
+         const currentState = result[`tabState_${tabs[0].id}`] || {};
+         const updatedState = { ...currentState, ...newState };
+         chrome.storage.session.set(
+           { [`tabState_${tabs[0].id}`]: updatedState },
+           () => {
+             loadState(); // Reload state to reflect changes
+           }
+         );
+       });
+     }
+   });
+ };
+
+ 
 
   const loadState = () => {
-    chrome.storage.session.get(
-      ["isEnabled", "fromLang", "toLang", "difficultyLevel", "isAIEnabled"],
-      (result) => {
-        setIsEnabled(result.isEnabled || false);
-        setFromLang(result.fromLang || "English");
-        setToLang(result.toLang || "Spanish");
-        setDifficultyLevel(result.difficultyLevel || "");
-        setIsAIEnabled(result.isAIEnabled || false);
-        setStatus(result.isEnabled ? "Translation active" : "");
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.storage.session.get(`tabState_${tabs[0].id}`, (result) => {
+          const state = result[`tabState_${tabs[0].id}`];
+          if (state) {
+            setIsEnabled(state.isEnabled);
+            setFromLang(state.fromLang);
+            setToLang(state.toLang);
+            setDifficultyLevel(state.difficultyLevel);
+            setIsAIEnabled(state.isAIEnabled);
+            setStatus(state.isEnabled ? "Translation active" : "");
+          }
+        });
       }
-    );
+    });
   };
 
   const handleSettingChange = async (setter, value) => {
@@ -104,7 +173,7 @@ const Popup = () => {
     return true;
   };
   const handleToggle = async () => {
-    console.log("extension toggles")
+    console.log("extension toggles");
     const newState = !isEnabled;
     if (newState && !validateState()) {
       return;
@@ -122,10 +191,9 @@ const Popup = () => {
       isAIEnabled,
     };
 
-    await chrome.storage.session.set(state);
-
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs[0]) {
+        await chrome.storage.session.set({ [`tabState_${tabs[0].id}`]: state });
         try {
           const response = await chrome.tabs.sendMessage(tabs[0].id, {
             action: newState ? "startTranslation" : "revertTranslation",
@@ -139,6 +207,7 @@ const Popup = () => {
     });
     setIsLoading(false);
   };
+
   const handleLanguageChange = (setter) => (e) => {
     handleSettingChange(setter, e.target.value);
   };
@@ -163,11 +232,15 @@ const Popup = () => {
   };
 
   return (
-    <div className="w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
+    <div className="relative w-full p-6 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg shadow-lg">
       <h1 className="text-2xl font-bold text-gray-800 mb-6 text-center">
         Learn While Browsing
       </h1>
-
+      <div className="absolute top-3 right-4 ">
+        <button onClick={() => setIsSttings(true)}>
+          <CiSettings fontSize={30} />
+        </button>
+      </div>
       <div className="flex items-center justify-between mb-6 bg-white p-3 rounded-lg shadow">
         <span className="text-sm font-medium text-gray-700">
           {isEnabled ? "Translation On" : "Translation Off"}
