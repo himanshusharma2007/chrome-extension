@@ -173,7 +173,7 @@ const Popup = ({ setIsSttings }) => {
     return true;
   };
   const handleToggle = async () => {
-    console.log("extension toggles");
+    console.log("extension toggles", process.env.API_KEY);
     const newState = !isEnabled;
     if (newState && !validateState()) {
       return;

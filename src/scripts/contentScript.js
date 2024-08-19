@@ -2,7 +2,8 @@
 
 const API_URL =
   "https://api-inference.huggingface.co/models/facebook/bart-large-mnli";
-const API_KEY = import.meta.env.API_KEY; // Replace with your actual API key
+let API_KEY;
+
 const MAX_AI_WORDS = 20; // Maximum number of words to select using AI
 const CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
 const languageCodeMap = {
@@ -46,7 +47,23 @@ const colorOptions = [
 ];
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
-
+async function getApiKey() {
+  console.log("getApiKey called");
+  if (!API_KEY) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: "getApiKey" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error getting API key:", chrome.runtime.lastError);
+          resolve(null);
+        } else {
+          API_KEY = response.apiKey;
+          resolve(API_KEY);
+        }
+      });
+    });
+  }
+  return API_KEY;
+}
 async function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, 1);
@@ -79,6 +96,7 @@ async function cacheTranslation(word, translation, fromLang, toLang) {
   store.put({ key, translation, timestamp: Date.now() });
 }
 async function selectWordsAI(text, difficultyLevel, retries = 3) {
+  console.log("API_KEY :>> ", API_KEY);
   console.log("Starting selectWordsAI function");
   console.log("Text length:", text.length);
   console.log("Difficulty level:", difficultyLevel);
@@ -180,31 +198,37 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
 }
 
 async function fetchAIResult(chunk) {
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inputs: chunk,
-      parameters: {
-        candidate_labels: ["common", "uncommon", "rare"],
+  try {
+    const apiKey = await getApiKey();
+
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        inputs: chunk,
+        parameters: {
+          candidate_labels: ["common", "uncommon", "rare"],
+        },
+      }),
+    });
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error("API Error Response:", errorBody);
-    throw new Error(
-      `HTTP error! status: ${response.status}, body: ${errorBody}`
-    );
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("API Error Response:", errorBody);
+      throw new Error(
+        `HTTP error! status: ${response.status}, body: ${errorBody}`
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching AI result:", error);
+    throw error;
   }
-
-  return await response.json();
 }
-
 function getWordsPerChunk(difficultyLevel) {
   switch (difficultyLevel) {
     case "beginner":
