@@ -2,7 +2,8 @@
 
 const API_URL =
   "https://api-inference.huggingface.co/models/facebook/bart-large-mnli";
-const API_KEY = "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"; // Replace with your actual API key
+let API_KEY;
+
 const MAX_AI_WORDS = 20; // Maximum number of words to select using AI
 const CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
 const languageCodeMap = {
@@ -38,10 +39,31 @@ const commonWords = new Set([
   "at",
   "has",
 ]);
+const colorOptions = [
+  { bg: "rgba(255, 249, 219, 0.5)", border: "#f2c94c", text: "text-gray-800" },
+  { bg: "rgba(230, 243, 255, 0.5)", border: "#4a90e2", text: "text-gray-800" },
+  { bg: "rgba(243, 230, 255, 0.5)", border: "#9b51e0", text: "text-gray-800" },
+  { bg: "rgba(230, 255, 237, 0.5)", border: "#27ae60", text: "text-gray-800" },
+];
 const dbName = "LanguageLearnerCache";
 const storeName = "translations";
-
-
+async function getApiKey() {
+  console.log("getApiKey called");
+  if (!API_KEY) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: "getApiKey" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error getting API key:", chrome.runtime.lastError);
+          resolve(null);
+        } else {
+          API_KEY = response.apiKey;
+          resolve(API_KEY);
+        }
+      });
+    });
+  }
+  return API_KEY;
+}
 async function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, 1);
@@ -74,6 +96,7 @@ async function cacheTranslation(word, translation, fromLang, toLang) {
   store.put({ key, translation, timestamp: Date.now() });
 }
 async function selectWordsAI(text, difficultyLevel, retries = 3) {
+  console.log("API_KEY :>> ", API_KEY);
   console.log("Starting selectWordsAI function");
   console.log("Text length:", text.length);
   console.log("Difficulty level:", difficultyLevel);
@@ -118,23 +141,32 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
     const MAX_AI_WORDS = Math.min(chunks.length * wordsPerChunk, 100); // Cap at 100 words
     console.log("Dynamic MAX_AI_WORDS:", MAX_AI_WORDS);
 
-    const selectedWords = [];
-    const selectedWordsSet = new Set(); // To keep track of unique words
+    const selectedWordsSet = new Set();
 
-    // Randomly select MAX_AI_WORDS from allMeaningfulWords
     while (
-      selectedWords.length < MAX_AI_WORDS &&
+      selectedWordsSet.size < MAX_AI_WORDS &&
       allMeaningfulWords.length > 0
     ) {
       const randomIndex = Math.floor(Math.random() * allMeaningfulWords.length);
       const word = allMeaningfulWords[randomIndex].toLowerCase();
       if (!selectedWordsSet.has(word)) {
         selectedWordsSet.add(word);
-        selectedWords.push(allMeaningfulWords[randomIndex]);
+      } else {
+        // If the word is a duplicate, replace it with a new word from allMeaningfulWords
         allMeaningfulWords.splice(randomIndex, 1);
+        if (allMeaningfulWords.length === 0) {
+          break; // Exit the loop if there are no more words left in allMeaningfulWords
+        }
+        const newRandomIndex = Math.floor(
+          Math.random() * allMeaningfulWords.length
+        );
+        const newWord = allMeaningfulWords[newRandomIndex].toLowerCase();
+        selectedWordsSet.add(newWord);
+        allMeaningfulWords.splice(newRandomIndex, 1);
       }
     }
 
+    const selectedWords = Array.from(selectedWordsSet);
     console.log("AI selectedWords:", selectedWords);
 
     if (selectedWords.length === 0) {
@@ -166,31 +198,37 @@ async function selectWordsAI(text, difficultyLevel, retries = 3) {
 }
 
 async function fetchAIResult(chunk) {
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      inputs: chunk,
-      parameters: {
-        candidate_labels: ["common", "uncommon", "rare"],
+  try {
+    const apiKey = await getApiKey();
+
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        inputs: chunk,
+        parameters: {
+          candidate_labels: ["common", "uncommon", "rare"],
+        },
+      }),
+    });
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error("API Error Response:", errorBody);
-    throw new Error(
-      `HTTP error! status: ${response.status}, body: ${errorBody}`
-    );
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("API Error Response:", errorBody);
+      throw new Error(
+        `HTTP error! status: ${response.status}, body: ${errorBody}`
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching AI result:", error);
+    throw error;
   }
-
-  return await response.json();
 }
-
 function getWordsPerChunk(difficultyLevel) {
   switch (difficultyLevel) {
     case "beginner":
@@ -430,7 +468,6 @@ async function replaceWords(fromLang, toLang, difficultyLevel, isAIEnabled) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Content script received message:", request);
   if (request.action === "startTranslation") {
-  
     replaceWords(
       request.fromLang,
       request.toLang,
@@ -443,7 +480,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       );
     return true;
   } else if (request.action === "revertTranslation") {
-   
     revertTranslation()
       .then(() =>
         sendResponse({ message: "Translation reverted successfully" })
@@ -515,44 +551,38 @@ function selectWords(
 
   // Filter and sort words
   let eligibleWords = allWords
-    .filter((word) => !previouslyTranslated.has(word.word))
     .filter((word) => word.frequency / totalWords <= frequencyThreshold)
     .sort((a, b) => b.frequency - a.frequency);
 
   // If we don't have enough eligible words, relax the frequency threshold
   if (eligibleWords.length < wordCount) {
-    eligibleWords = allWords
-      .filter((word) => !previouslyTranslated.has(word.word))
-      .sort((a, b) => b.frequency - a.frequency);
+    eligibleWords = allWords.sort((a, b) => b.frequency - a.frequency);
   }
 
   const selectedWords = [];
   const usedIndices = new Set();
 
+  // Add a maximum iteration count to prevent infinite loops
+  const maxIterations = eligibleWords.length * 2;
+  let iterations = 0;
+
   while (
     selectedWords.length < wordCount &&
-    usedIndices.size < eligibleWords.length
+    usedIndices.size < eligibleWords.length &&
+    iterations < maxIterations
   ) {
     const randomIndex = Math.floor(Math.random() * eligibleWords.length);
     if (!usedIndices.has(randomIndex)) {
       selectedWords.push(eligibleWords[randomIndex]);
       usedIndices.add(randomIndex);
     }
+    iterations++;
   }
 
-  // If we still don't have enough words, fill with random words from allWords
-  while (selectedWords.length < wordCount) {
-    const randomIndex = Math.floor(Math.random() * allWords.length);
-    const word = allWords[randomIndex];
-    if (
-      !selectedWords.some((w) => w.word === word.word) &&
-      !previouslyTranslated.has(word.word)
-    ) {
-      selectedWords.push(word);
-    }
-  }
+  console.log(
+    `Selected ${selectedWords.length} words out of ${wordCount} requested`
+  );
 
-  console.log("Selected words:", selectedWords);
   return selectedWords;
 }
 async function translateWords(wordsToTranslate, fromLang, toLang) {
@@ -601,12 +631,7 @@ async function translateSingleWord(word, fromLang, toLang) {
     return word; // Return original word if translation fails
   }
 }
-// Add this function to contentScript.js
-function speakWord(word, lang) {
-  const utterance = new SpeechSynthesisUtterance(word);
-  utterance.lang = lang;
-  speechSynthesis.speak(utterance);
-}
+
 function replaceSelectedWords(textNodes, translatedWords) {
   // Create a map of original words to their translations
   const translationMap = new Map(
@@ -692,12 +717,51 @@ function isNodeVisible(node) {
   );
 }
 
+let highlightStyle = {
+  bg: "rgba(230, 243, 255, 0.5)",
+  border: "#4a90e2",
+  text: "text-gray-800",
+};
+let textToSpeechEnabled = true;
+
+// Add this function to load settings
+function loadSettings() {
+  chrome.storage.sync.get(
+    [
+      "selectedStyle",
+      "textToSpeechEnabled",
+      "defaultAIEnabled",
+      "defaultFromLang",
+      "defaultToLang",
+      "defaultDifficulty",
+    ],
+    (result) => {
+      const styleIndex = result.selectedStyle ?? 0;
+      highlightStyle = colorOptions[styleIndex];
+      textToSpeechEnabled = result.textToSpeechEnabled ?? true;
+      isAIEnabled = result.defaultAIEnabled ?? false;
+      fromLang = result.defaultFromLang ?? "English";
+      toLang = result.defaultToLang ?? "Spanish";
+      difficultyLevel = result.defaultDifficulty ?? "intermediate";
+    }
+  );
+}
+
+// Call loadSettings at the beginning of the script and whenever settings change
+loadSettings();
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === "sync") {
+    loadSettings();
+  }
+});
+
+// Modify the addStyles function to use the selected highlight style
 function addStyles() {
   const style = document.createElement("style");
   style.textContent = `
     .translated-word {
-      background-color: rgba(230, 243, 255, 0.5);
-      border-bottom: 2px solid #4a90e2;
+      background-color: ${highlightStyle.bg};
+      border-bottom: 2px solid ${highlightStyle.border};
       padding: 0 2px;
       margin: 0 1px;
       border-radius: 3px;
@@ -708,7 +772,7 @@ function addStyles() {
     }
 
     .translated-word:hover {
-      background-color: rgba(230, 243, 255, 0.8);
+      background-color: ${highlightStyle.bg.replace("0.5", "0.8")};
     }
 
     .translated-word::after {
@@ -752,8 +816,17 @@ function addStyles() {
     .translated-word:hover::before {
       display: block;
     }
-`;
+  `;
   document.head.appendChild(style);
+}
+
+// Modify the speakWord function to respect the textToSpeechEnabled setting
+function speakWord(word, lang) {
+  if (textToSpeechEnabled) {
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.lang = lang;
+    speechSynthesis.speak(utterance);
+  }
 }
 
 function revertTranslation() {
