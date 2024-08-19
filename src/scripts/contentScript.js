@@ -639,19 +639,25 @@ function replaceSelectedWords(textNodes, translatedWords) {
   );
 
   textNodes.forEach((node) => {
-    if (node && node.textContent) {
+    if (node && node.nodeType === Node.TEXT_NODE) {
       let newContent = node.textContent;
-      translatedWords.forEach(({ word, translation }) => {
-        if (translation && translation !== word) {
-          const regex = new RegExp(`\\b${escapeRegExp(word)}\\b`, "gi");
+      let hasChanges = false;
+
+      translationMap.forEach((translation, originalWord) => {
+        if (translation && translation !== originalWord) {
+          const regex = new RegExp(`\\b${escapeRegExp(originalWord)}\\b`, "gi");
           newContent = newContent.replace(regex, (match) => {
+            hasChanges = true;
             return `<span class="translated-word" data-original="${match}">${translation}</span>`;
           });
         }
       });
 
-      if (newContent !== node.textContent) {
-        replaceNodeContent(node, newContent);
+      if (hasChanges) {
+        const fragment = document
+          .createRange()
+          .createContextualFragment(newContent);
+        node.parentNode.replaceChild(fragment, node);
       }
     }
   });
@@ -665,7 +671,6 @@ function replaceSelectedWords(textNodes, translatedWords) {
     });
   });
 }
-
 // Helper function to escape special characters in regex
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
